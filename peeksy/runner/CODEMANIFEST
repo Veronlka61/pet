@@ -1,0 +1,118 @@
+Imports:
+  - Types:
+      - Suite
+      - Page
+      - Component
+      - Viewport
+    From: peeksy/config
+  - Types:
+      - CaptureSession
+    From: peeksy/capture
+  - Types:
+      - compare
+      - ComparisonResult
+    From: peeksy/compare
+  - Types:
+      - Outcome
+      - write_results
+      - build_report
+    From: peeksy/reporting
+
+Usages:
+  run_policy: |
+    Orchestration rules for a peeksy run. generate writes baselines only. test is
+    read-only on baselines and returns exit_code 0 when every component PASSES, otherwise 1.
+    Capture/infrastructure failures become Outcome status BROKEN, not visual regressions.
+    A missing baseline file is also BROKEN ("baseline not found; run peeksy generate"),
+    never a visual regression. Every BROKEN Outcome carries a human-readable error; its
+    current_path/baseline_path are None when the corresponding image does not exist.
+    Effective threshold/tolerance per component = component override ?? suite default.
+    Paths are namespaced by page: baseline {baseline_path}/{page}/{name}_{WxH}.png,
+    current {results_path}/{page}/{name}_{WxH}.current.png, diff {results_path}/{page}/{name}_{WxH}.diff.png.
+    Capture is grouped by (page, viewport): open_page is called once per (page, viewport),
+    then each component at that viewport is captured — page setup never repeats per component.
+    If open_page fails, every (component, viewport) on that page becomes BROKEN with the
+    page-setup error. pages filters by page name, components by component name; both None ⇒ all.
+    Before writing results, test clears the results_path of prior *-result.json and
+    attachment files so consecutive runs never silently mix.
+
+Annotations: |
+  Runner cell — orchestrates generate/test/report over a Suite of pages.
+
+  Use `run_policy` for orchestration rules and path conventions.
+  `Suite`, `Page`, `Component`, `Viewport` come from the config cell; `CaptureSession` from capture;
+  `compare` and `ComparisonResult` from compare; `Outcome`, `write_results`, `build_report` from reporting.
+
+---
+
+"run_generate(suite: Suite, pages: list[str] | None, components: list[str] | None)":
+  location: runner.py
+  annotations: |
+    Capture and store baselines for the selected pages/components.
+
+    `suite`: the loaded configuration
+    `pages`: page names to limit to (None => all)
+    `components`: component names to limit to (None => all)
+
+    Algorithm:
+    1. Filter suite.pages by `pages` and each page's components by `components` per `run_policy` (None => all)
+    2. Open a `CaptureSession`
+    3. For each filtered `Page`:
+       a. Compute the set of Viewports needed = union of viewports across its filtered components
+       b. For each `Viewport`: open_page(page, viewport), then for each component that includes this `Viewport`, capture_component into {baseline_path}/{page}/{name}_{WxH}.png per `run_policy`
+    4. Close the `CaptureSession`
+
+    Use `run_policy` for path conventions and capture grouping.
+    Use `CaptureSession` from Imports for capture.
+
+"run_test(suite: Suite, pages: list[str] | None, components: list[str] | None) -> exit_code: int":
+  location: runner.py
+  annotations: |
+    Capture, compare against baselines, and write Allure outcomes.
+
+    `suite`: the loaded configuration
+    `pages`: page names to limit to (None => all)
+    `components`: component names to limit to (None => all)
+    `exit_code`: 0 when every component PASSES, otherwise 1
+
+    Algorithm:
+    1. Filter suite.pages by `pages` and each page's components by `components` per `run_policy` (None => all)
+    2. Open a `CaptureSession`; collect `Outcome`s
+    3. For each filtered `Page`:
+       a. Compute the set of Viewports needed = union of viewports across its filtered components
+       b. For each `Viewport`:
+          i. Try: open_page(page, viewport)
+          ii. Except: append a BROKEN `Outcome` (page, name, viewport, error "page setup failed: ...", current_path None) for every component at this viewport per `run_policy`; continue to the next viewport
+          iii. For each component at this `Viewport`:
+               - Try: capture_component -> current {results_path}/{page}/{name}_{WxH}.current.png
+               - Except capture error: append a BROKEN `Outcome` with error and current_path None; continue
+               - If baseline {baseline_path}/{page}/{name}_{WxH}.png does not exist: append a BROKEN `Outcome` with error "baseline not found; run peeksy generate" per `run_policy`; continue
+               - Resolve effective threshold/tolerance = component override ?? `suite` default per `run_policy`
+               - `compare` baseline vs current with the resolved thresholds -> `ComparisonResult`; status = PASSED if it passed, else FAILED
+               - Append a PASSED/FAILED `Outcome` (page, name, viewport, status, mismatch_percent, baseline/current/diff paths, error None)
+    4. Clear the `suite` results_path of prior *-result.json and attachment files per `run_policy`
+    5. `write_results` the outcomes into the `suite` results_path
+    6. Return `exit_code` 0 if all outcomes PASSED else 1
+
+    Use `run_policy` for orchestration rules, path conventions, and capture grouping.
+    Use `compare`, `ComparisonResult`, `Outcome`, `write_results` from Imports.
+
+"run_report(suite: Suite)":
+  location: runner.py
+  annotations: |
+    Build the Allure HTML report from the results directory.
+
+    `suite`: the loaded configuration (provides results_path and report_path)
+
+    Algorithm:
+    1. Call `build_report` with the `suite` results_path and report_path
+
+    Use `run_policy` for the report stage.
+    Use `build_report` from Imports.
+
+---
+Author: Goga
+CreatedAt: 13/07/26
+Description: |
+  Runner cell — orchestrates generate/test/report over pages: two-level capture (open_page +
+  capture_component), compare, and Allure reporting, with CI-friendly exit codes and BROKEN handling.

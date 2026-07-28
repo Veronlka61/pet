@@ -1,0 +1,185 @@
+Usages:
+  pydantic_config: |
+    Config models are Pydantic v2 BaseModel records. Fields are immutable where practical.
+    The site is a folder; `load_config` reads suite.yml plus every pages/*/page.yml and
+    its sibling component *.yml files, and validates everything through the models. A
+    malformed or invalid file must raise a Pydantic ValidationError surfaced as a
+    human-readable message.
+    Component.name is derived from its filename (without .yml); Page.name from its
+    folder name. Component.name must be unique WITHIN a page (the baseline path and
+    testCaseId are namespaced by page) — duplicates inside one page are a validation error.
+    threshold (0..1) is the per-pixel sensitivity forwarded to pixelmatch; tolerance
+    is the allowed mismatch percent that decides pass/fail. Both accept a per-component
+    override where None means "inherit the suite default".
+    `Action` setup lists use a short YAML form parsed into Action(kind, target, value):
+    a single string is the target for click/hover/scroll_to or the value for press/scroll_by/open;
+    a list is [target, value] for fill/select (and optionally press); wait takes a
+    selector (appear), {selector: ..., hidden: true} (disappear), a millisecond number (pause),
+    or nothing (default stabilization); open takes a URL to navigate to as the value.
+
+Annotations: |
+  Config cell — validated YAML configuration model for a peeksy site (variant D layout).
+
+  Use `pydantic_config` for model definitions, the site-folder discovery rules, and validation.
+  Do not conflate threshold (per-pixel sensitivity) with tolerance (allowed mismatch %).
+  Effective threshold/tolerance are resolved downstream as: component override ?? suite default.
+  `Action` only describes what to do; it is executed by the capture cell.
+
+---
+
+"Viewport(width: int, height: int)":
+  location: models.py
+  annotations: |
+    A single viewport dimension in CSS pixels.
+
+    `width`: viewport width in CSS pixels
+    `height`: viewport height in CSS pixels
+
+    Use `pydantic_config` for the model definition.
+  properties:
+    "width -> int": |
+      Viewport width in CSS pixels.
+    "height -> int": |
+      Viewport height in CSS pixels.
+
+"Action(kind: str, target: str | None, value: str | None)":
+  location: models.py
+  annotations: |
+    One setup action to perform on a page or component before a screenshot.
+
+    `kind`: one of click, hover, scroll_to, scroll_by, fill, press, select, wait, open
+    `target`: CSS selector of the element the action targets; None when the action needs no element
+    `value`: auxiliary value whose meaning depends on `kind` — fill/press/select text/key/option, scroll_by pixels, wait milliseconds-or-mode, open a URL; None when not applicable
+
+    `Action` is data only — it carries no behaviour. The capture cell interprets each kind
+    via Playwright. The short YAML form is parsed into this model by `load_config`
+    per `pydantic_config`. Per-kind argument rules: click/hover/scroll_to take a `target`;
+    scroll_by takes pixel `value` (or [x, y]); fill/select take [target, value]; press takes a
+    key `value` (optionally [target, key]); wait takes a selector `target` (appear),
+    {selector, hidden} (disappear), a millisecond `value` (pause), or nothing (default stabilization);
+    open takes a URL `value` and targets no element.
+
+    Requirements:
+    - click/hover/scroll_to: `target` = selector, `value` = None
+    - fill/select: `target` = selector, `value` = text/option to enter or pick
+    - press: `value` = a Playwright key name ("Enter", "Tab", ...); `target` optional (element to press on)
+    - scroll_by: `value` = pixels ("300") or "[x, y]"
+    - wait: `value` = milliseconds ("500"), "hidden" (with a `target` selector), or None (default stabilization)
+    - open: `value` = URL to navigate the page to; `target` = None
+
+    Use `pydantic_config` for the model definition.
+  properties:
+    "kind -> str": |
+      One of click, hover, scroll_to, scroll_by, fill, press, select, wait, open.
+    "target -> str | None": |
+      CSS selector of the action target; None when no element is needed.
+    "value -> str | None": |
+      Auxiliary value (text/key/option/pixels/milliseconds/mode/URL); meaning depends on kind; None when not applicable.
+
+"Component(name: str, selector: str, mask_selectors: list[str], viewports: list[Viewport], threshold: float | None, tolerance: float | None, setup: list[Action])":
+  location: models.py
+  annotations: |
+    Specification of one UI component on a page.
+
+    `name`: component identifier, derived from its filename; unique within its page
+    `selector`: CSS selector locating the component element
+    `mask_selectors`: CSS selectors of dynamic regions to hide before the shot
+    `viewports`: viewports to capture this component at (one baseline/result per viewport)
+    `threshold`: per-pixel sensitivity override (None => inherit suite threshold)
+    `tolerance`: allowed mismatch % override (None => inherit suite tolerance)
+    `setup`: component-level actions to run before this component's shot (e.g. hover, click a tab)
+
+    A component does not carry a URL — that lives on its `Page`. Use `pydantic_config` for the model definition.
+  properties:
+    "name -> str": |
+      Component identifier (from its filename); unique within its page.
+    "selector -> str": |
+      CSS selector locating the component element.
+    "mask_selectors -> list[str]": |
+      CSS selectors of dynamic regions to hide before the shot.
+    "viewports -> list[Viewport]": |
+      Viewports to capture this component at.
+    "threshold -> float | None": |
+      Per-pixel sensitivity override; None inherits the suite default.
+    "tolerance -> float | None": |
+      Allowed mismatch % override; None inherits the suite default.
+    "setup -> list[Action]": |
+      Component-level actions to run before the shot.
+
+"Page(name: str, url: str, setup: list[Action], components: list[Component])":
+  location: models.py
+  annotations: |
+    One page of the site: a URL, page-level setup actions, and the components on it.
+
+    `name`: page identifier, derived from its folder name
+    `url`: page URL to open before capturing any of its components
+    `setup`: page-level actions run once per viewport after navigation (e.g. close cookie banner, log in)
+    `components`: components discovered as the sibling *.yml files of this page's page.yml
+
+    Validation: Component.name values MUST be unique within `components` of this page; a
+    model_validator rejects duplicates so they cannot collide on the page-namespaced
+    baseline path or testCaseId. Use `pydantic_config` for the model definition.
+  properties:
+    "name -> str": |
+      Page identifier (from its folder name).
+    "url -> str": |
+      Page URL to open before capturing.
+    "setup -> list[Action]": |
+      Page-level actions run once per viewport after navigation.
+    "components -> list[Component]": |
+      Components on this page (sibling *.yml files).
+
+"Suite(name: str, pages: list[Page], baseline_path: str, results_path: str, report_path: str, threshold: float, tolerance: float)":
+  location: models.py
+  annotations: |
+    The whole peeksy configuration loaded from a site folder.
+
+    `name`: suite/site name (used as the Allure suite label)
+    `pages`: pages to capture and compare
+    `baseline_path`: directory for baseline PNGs (written by generate, read-only for test), organized as {baseline_path}/{page}/{name}_{WxH}.png
+    `results_path`: directory for Allure results and current/diff PNGs
+    `report_path`: directory for the built HTML report
+    `threshold`: suite-default per-pixel sensitivity (0..1) forwarded to pixelmatch
+    `tolerance`: suite-default allowed mismatch % — a component PASSES when mismatch% <= tolerance
+
+    The same component name MAY appear on different pages (they are namespaced by page); only
+    duplicates within a single page are rejected. Use `pydantic_config` for the model definition.
+  properties:
+    "name -> str": |
+      Suite/site name; used as the Allure suite label.
+    "pages -> list[Page]": |
+      Pages to capture and compare.
+    "baseline_path -> str": |
+      Directory for baseline PNGs (organized by page).
+    "results_path -> str": |
+      Directory for Allure results and current/diff PNGs.
+    "report_path -> str": |
+      Directory for the built HTML report.
+    "threshold -> float": |
+      Suite-default per-pixel sensitivity (0..1).
+    "tolerance -> float": |
+      Suite-default allowed mismatch %.
+
+"load_config(path: str) -> suite: Suite":
+  location: loader.py
+  annotations: |
+    Discover and validate a peeksy site folder.
+
+    `path`: path to the site folder (a suite.yml inside is also accepted)
+    `suite`: the validated Suite
+
+    Algorithm:
+    1. Resolve the site folder from `path` (if `path` is suite.yml, use its parent)
+    2. Read and validate suite.yml for the suite meta (name, paths, threshold, tolerance)
+    3. For each subfolder of pages/, read its page.yml (url, setup) and discover its components as the other *.yml files in that folder
+    4. Build `Page` and `Component` models (names derived from folder/filenames) and validate per `pydantic_config`, including per-page name uniqueness
+    5. Return the resulting `Suite`; raise on any validation or IO error with a human-readable message
+
+    Use `pydantic_config` for validation rules.
+
+---
+Author: Goga
+CreatedAt: 13/07/26
+Description: |
+  Config cell — Pydantic v2 models (Viewport, Action, Component, Page, Suite) and the
+  site-folder loader for the variant D layout, including the configurable `threshold`/`tolerance`.

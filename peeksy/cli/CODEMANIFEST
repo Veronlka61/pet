@@ -1,0 +1,92 @@
+Imports:
+  - Types:
+      - load_config
+      - Suite
+    From: peeksy/config
+  - Types:
+      - run_generate
+      - run_test
+      - run_report
+    From: peeksy/runner
+
+Usages:
+  typer: |
+    CLI commands are Typer commands on a single Typer app. --config takes the site folder
+    (or its suite.yml). --page and --component are repeatable filters (list[str] | None);
+    both applied as an AND. Commands load the config via `load_config` and delegate to the runner.
+    test prints a one-line summary and then raise typer.Exit(code=exit_code) (never sys.exit)
+    so CI fails on regression and pytest can still intercept the exit.
+
+Annotations: |
+  CLI cell — Typer facade for the peeksy commands.
+
+  Use `typer` for command definitions and the repeatable --page/--component options.
+  `load_config` and `Suite` come from the config cell; `run_generate`, `run_test`, `run_report` from runner.
+
+---
+
+"generate(config: str, page: list[str] | None, component: list[str] | None)":
+  location: app.py
+  annotations: |
+    peeksy generate command — capture and store baselines.
+
+    `config`: path to the site folder (or its suite.yml)
+    `page`: repeatable page name filter (None => all)
+    `component`: repeatable component name filter (None => all)
+
+    Algorithm:
+    1. `load_config` `config` into a `Suite`
+    2. Call `run_generate` with the `Suite`, `page`, and `component`
+
+    Use `typer` for the command and --page/--component options.
+    Use `load_config` and `run_generate` from Imports.
+
+"test(config: str, page: list[str] | None, component: list[str] | None)":
+  location: app.py
+  annotations: |
+    peeksy test command — compare against baselines and fail CI on regression.
+
+    `config`: path to the site folder (or its suite.yml)
+    `page`: repeatable page name filter (None => all)
+    `component`: repeatable component name filter (None => all)
+
+    Algorithm:
+    1. `load_config` `config` into a `Suite`
+    2. Call `run_test` with the `Suite`, `page`, and `component` to get the exit code
+    3. Print a one-line summary derived from the exit code ("all components passed" when 0, otherwise "regression or infrastructure failure detected — see the Allure report")
+    4. raise typer.Exit(code=exit_code) per `typer` so CI fails on any regression
+
+    Use `typer` for the command, the --page/--component options, and typer.Exit.
+    Use `load_config` and `run_test` from Imports.
+
+"report(config: str)":
+  location: app.py
+  annotations: |
+    peeksy report command — build the Allure HTML report.
+
+    `config`: path to the site folder (or its suite.yml)
+
+    Algorithm:
+    1. `load_config` `config` into a `Suite`
+    2. Call `run_report` with the `Suite`
+    3. If `run_report` raises the missing-allure-CLI error, print a human-readable message with install instructions (brew/sdkman, requires JDK) and exit non-zero instead of surfacing a Python traceback
+
+    Use `typer` for the command.
+    Use `load_config` and `run_report` from Imports.
+
+"main()":
+  location: app.py
+  annotations: |
+    Entry point of the peeksy console script.
+
+    Algorithm:
+    1. Run the Typer app per `typer`
+
+    Use `typer` for the app entry point.
+
+---
+Author: Goga
+CreatedAt: 13/07/26
+Description: |
+  CLI cell — Typer facade with generate/test/report commands, --page/--component filters,
+  and the peeksy console entry point.

@@ -1,0 +1,81 @@
+Imports:
+  - Types:
+      - Component
+      - Viewport
+      - Page
+      - Action
+    From: peeksy/config
+
+Usages:
+  playwright: .goga/usages/cooks/playwright.md
+
+Annotations: |
+  Capture cell — deterministic element-level screenshots via Playwright, including the
+  execution of page/component `Action` setup steps.
+
+  Use `playwright` for the Playwright lifecycle, capture routine, action execution, masking,
+  and determinism rules. One browser and one context (device_scale_factor=1) are reused across
+  the whole run. `Component`, `Viewport`, `Page`, and `Action` come from Imports.
+  Capture is split: open_page navigates and runs the page setup once per viewport;
+  capture_component runs the component setup, masked, and shoots.
+  Masking uses visibility: hidden (never display: none) so the masked element keeps its
+  layout box — display: none would reflow neighbors and shift the component.
+  Each `Action` is interpreted via Playwright per `playwright` according to its kind:
+  click/hover/fill/press/select act on a located element, scroll_to/scroll_by move the page,
+  open navigates the page to the URL given as its value with the same networkidle + fonts
+  determinism as open_page, and wait blocks until an element appears/disappears, a millisecond
+  elapses, or the default stabilization (networkidle + fonts.ready) completes.
+  A component selector may be a Playwright piercing selector (e.g. my-widget >> button.save,
+  which crosses shadow-DOM boundaries) or address a component inside an <iframe> (resolved via
+  frame_locator); capture_component localizes it the same way as a plain CSS selector.
+
+---
+
+"CaptureSession()":
+  location: session.py
+  annotations: |
+    Owns the Playwright browser/context lifecycle for one run.
+
+    Use `playwright` for the browser/context setup and teardown.
+    Constraints: open_page/capture_component require open() first; the session must be close()d after use.
+  methods:
+    "open()": |
+      Launch a headless Chromium browser and a single context with device_scale_factor=1 and one page per `playwright`.
+    "open_page(page: Page, viewport: Viewport)": |
+      Navigate to a page at a viewport and run its page-level setup once.
+
+      `page`: the page spec (url, setup) from Imports
+      `viewport`: the viewport to set before any component on this page is captured
+
+      Algorithm:
+      1. Set the page viewport to `viewport` per `playwright`
+      2. Navigate to page.url with wait_until="networkidle" per `playwright`
+      3. Disable animations/transitions and wait for document.fonts.ready per `playwright`
+      4. For each `Action` in page.setup, execute it via Playwright according to its kind
+
+      Use `playwright` for navigation, determinism, and action execution.
+      Constraints: call once per (page, viewport); captures for that pair happen via capture_component afterwards.
+    "capture_component(component: Component, out_path: str) -> png_path: str": |
+      Capture a deterministic screenshot of one component on the currently open page.
+
+      `component`: the component spec (selector, mask_selectors, setup) from Imports
+      `out_path`: file path to write the PNG to
+      `png_path`: the written PNG path (equals `out_path`)
+
+      Algorithm:
+      1. For each `Action` in component.setup, execute it via Playwright according to its kind
+      2. For every mask selector of `component`, set visibility: hidden on the matched elements per `playwright` (not display: none — preserve the layout box)
+      3. Locate the `component` selector (first match) — a plain CSS selector, a piercing selector crossing shadow-DOM boundaries, or a selector inside an <iframe> via frame_locator — wait for visible, and screenshot into `out_path`
+      4. Return `out_path`
+
+      Use `playwright` for the capture routine, action execution, and masking.
+      Constraints: idempotent — two captures of the same `Component` on the same open page produce pixelmatch-clean images.
+    "close()": |
+      Tear down the context and browser per `playwright`.
+
+---
+Author: Goga
+CreatedAt: 13/07/26
+Description: |
+  Capture cell — Playwright CaptureSession with two-level setup: open_page navigates and
+  runs page setup once per viewport; capture_component runs component setup, masks, and shoots.

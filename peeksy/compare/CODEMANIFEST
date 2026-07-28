@@ -1,0 +1,59 @@
+Usages:
+  image_diff: .goga/usages/cooks/image-diff.md
+
+Annotations: |
+  Compare cell — pixelmatch-based comparison of two component screenshots.
+
+  Use `image_diff` for the pixelmatch call signature and diff-overlay handling.
+  threshold is the per-pixel sensitivity (0..1) forwarded to pixelmatch; tolerance is the
+  allowed mismatch % that decides passed. A size change is a regression (mismatch 100%).
+
+---
+
+"ComparisonResult(passed: bool, mismatch_percent: float, diff_path: str | None)":
+  location: result.py
+  annotations: |
+    Verdict of one image comparison.
+
+    `passed`: True when `mismatch_percent` is within the allowed tolerance
+    `mismatch_percent`: percentage of differing pixels (0..100)
+    `diff_path`: path to the diff overlay image; None when the comparison passed (no diff written)
+
+    Use `image_diff` for the meaning of `mismatch_percent` and `diff_path`.
+  properties:
+    "passed -> bool": |
+      True when mismatch_percent is within the allowed tolerance.
+    "mismatch_percent -> float": |
+      Percentage of differing pixels (0..100).
+    "diff_path -> str | None": |
+      Path to the diff overlay image; None when the comparison passed.
+
+"compare(baseline: str, current: str, diff_dir: str, threshold: float, tolerance: float) -> result: ComparisonResult":
+  location: compare.py
+  annotations: |
+    Compare a baseline PNG against a current PNG and decide whether the component regressed.
+
+    `baseline`: path to the baseline PNG
+    `current`: path to the current PNG
+    `diff_dir`: directory to write the diff overlay into (only when not passed)
+    `threshold`: per-pixel color sensitivity (0..1) forwarded to pixelmatch
+    `tolerance`: allowed mismatch % — passed is True when mismatch% <= tolerance
+    `result`: the ComparisonResult verdict
+
+    Algorithm:
+    1. Load `baseline` and `current`, convert both to RGBA per `image_diff`
+    2. If sizes differ, return a failed `ComparisonResult` with mismatch_percent 100.0 and diff_path None
+    3. Run pixelmatch with `threshold` and includeAA to count mismatched pixels per `image_diff`
+    4. Compute mismatch_percent = mismatched / total * 100
+    5. Set passed = mismatch_percent <= `tolerance`
+    6. If not passed, save the diff overlay into `diff_dir` and set diff_path; otherwise diff_path None
+    7. Return the `ComparisonResult`
+
+    Use `image_diff` for the pixelmatch call and diff-overlay handling.
+
+---
+Author: Goga
+CreatedAt: 13/07/26
+Description: |
+  Compare cell — pixelmatch comparison producing a pass/fail verdict, mismatch %,
+  and diff overlay; `tolerance` decides the verdict.
