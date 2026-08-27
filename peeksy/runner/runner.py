@@ -107,6 +107,9 @@ def _run_viewport(
                 component.name,
                 label,
                 error=f"page setup failed: {error}",
+                # An existing baseline stays attached — run_policy: the path is
+                # None only when the image does not exist.
+                baseline_path=_existing_baseline(suite, page, component, viewport),
             )
             for component in at_viewport
         ]
@@ -114,14 +117,24 @@ def _run_viewport(
     outcomes: list[Outcome] = []
     for component in at_viewport:
         current = _current_png(suite, page, component, viewport)
+        baseline = _baseline_png(suite, page, component, viewport)
+        baseline_path = _existing_baseline(suite, page, component, viewport)
         try:
             session.capture_component(component, current)
         except Exception as error:  # noqa: BLE001
-            outcomes.append(_broken(suite, page.name, component.name, label, error=str(error)))
+            outcomes.append(
+                _broken(
+                    suite,
+                    page.name,
+                    component.name,
+                    label,
+                    error=str(error),
+                    baseline_path=baseline_path,
+                )
+            )
             continue
 
-        baseline = _baseline_png(suite, page, component, viewport)
-        if not Path(baseline).exists():
+        if baseline_path is None:
             outcomes.append(
                 _broken(
                     suite,
@@ -148,6 +161,7 @@ def _run_viewport(
                     component.name,
                     label,
                     error=f"comparison failed: {error}",
+                    baseline_path=baseline_path,
                 )
             )
             continue
@@ -220,6 +234,14 @@ def _baseline_png(suite: Suite, page: Page, component: Component, viewport: View
     return str(
         Path(suite.baseline_path) / page.name / f"{component.name}_{_viewport_label(viewport)}.png"
     )
+
+
+def _existing_baseline(
+    suite: Suite, page: Page, component: Component, viewport: Viewport
+) -> str | None:
+    """The baseline path when the PNG exists, else None (per `run_policy`)."""
+    baseline = _baseline_png(suite, page, component, viewport)
+    return baseline if Path(baseline).exists() else None
 
 
 def _current_png(suite: Suite, page: Page, component: Component, viewport: Viewport) -> str:

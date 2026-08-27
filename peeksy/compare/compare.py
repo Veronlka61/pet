@@ -31,9 +31,11 @@ def compare(
         return ComparisonResult(passed=False, mismatch_percent=100.0, diff_path=None)
 
     diff_img = Image.new("RGBA", baseline_img.size)
-    mismatched = pixelmatch(
-        baseline_img, current_img, diff_img, threshold=threshold, includeAA=True
-    )
+    # No `includeAA`: pixelmatch's flag is inverted relative to its name —
+    # `includeAA=True` DISABLES the anti-aliasing detector (`if not includeAA`
+    # guards it), so every AA edge pixel over `threshold` would count as a hard
+    # mismatch and text-heavy components would flap between PASSED and FAILED.
+    mismatched = pixelmatch(baseline_img, current_img, diff_img, threshold=threshold)
     total = baseline_img.size[0] * baseline_img.size[1]
     mismatch_percent = (mismatched / total) * 100.0
 

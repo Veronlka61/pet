@@ -11,7 +11,7 @@ into `(kind, target, value)` here by `model_validator` per the per-kind rules.
 
 from typing import Literal, get_args
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ActionKind = Literal[
     "click",
@@ -49,6 +49,10 @@ class Action(BaseModel):
     `model_validator`, which fills `target`/`value` per `kind`.
     """
 
+    # A typo'd key (`- click: {taget: "#x"}`) must fail HERE as a config error,
+    # not surface later as a Playwright locator error mid-run.
+    model_config = ConfigDict(extra="forbid")
+
     kind: ActionKind = Field(description="Which Playwright operation to run.")
     target: str | None = Field(default=None, description="CSS selector of the action target.")
     value: str | None = Field(
@@ -73,6 +77,20 @@ class Action(BaseModel):
         return _argument_for(kind, arg)
 
 
+def _pixels(value: object) -> int:
+    """Whole CSS pixels only — a fractional scroll is a config error, not a
+    capture-time `int()` crash (`.5` pixels are not addressable anyway)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(  # noqa: TRY004 — config error, not a programming error
+            f"scroll_by takes whole pixels, got {value!r}"
+        )
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"scroll_by takes whole pixels, got {value!r}")
+        return int(value)
+    return value
+
+
 def _argument_for(kind: str, arg: object) -> dict[str, object]:
     """Map one short-form `(kind, argument)` pair onto Action fields."""
     if kind == "reload":
@@ -87,11 +105,11 @@ def _argument_for(kind: str, arg: object) -> dict[str, object]:
         if len(arg) != 2:
             raise ValueError(f"scroll_by takes pixels or [x, y], got {arg!r}")
         x, y = arg
-        return {"kind": "scroll_by", "target": None, "value": f"{x},{y}"}
+        return {"kind": "scroll_by", "target": None, "value": f"{_pixels(x)},{_pixels(y)}"}
 
     if kind == "scroll_by" and isinstance(arg, (int, float)) and not isinstance(arg, bool):
         # The documented form is an unquoted YAML number: `- scroll_by: 300`.
-        return {"kind": "scroll_by", "target": None, "value": str(arg)}
+        return {"kind": "scroll_by", "target": None, "value": str(_pixels(arg))}
 
     if isinstance(arg, str):
         if kind in _TARGET_FROM_STRING:
@@ -136,6 +154,10 @@ def _wait_argument(arg: object) -> dict[str, object]:
 class Component(BaseModel):
     """Specification of one UI component on a page."""
 
+    # `mask_selector:` (singular) or `tollerance:` would otherwise silently
+    # disable the feature the user meant to configure.
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(description="Component identifier; unique within its page.")
     selector: str = Field(description="CSS selector locating the component element.")
     mask_selectors: list[str] = Field(
@@ -166,6 +188,8 @@ class Component(BaseModel):
 
 class Page(BaseModel):
     """One page of the site: URL, wait strategy, setup actions, components."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Page identifier, derived from its folder name.")
     url: str | None = Field(
@@ -212,6 +236,8 @@ class Page(BaseModel):
 
 class Suite(BaseModel):
     """The whole peeksy configuration loaded from a site folder."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Suite/site name; used as the Allure suite label.")
     pages: list[Page] = Field(default_factory=list, description="Pages to capture and compare.")

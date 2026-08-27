@@ -265,7 +265,9 @@ def test_run_test_page_setup_failure_marks_all_components_broken(
     header = find_result(results_dir, "home", "header", DESKTOP_LABEL)
     assert header["status"] == "broken"
     assert "page setup failed" in header["statusDetails"]["message"]
-    assert [a["name"] for a in header.get("attachments", [])] == []
+    # The baseline exists — it stays attached (run_policy: the path is None
+    # only when the image does not exist), but no current/diff was captured.
+    assert [a["name"] for a in header.get("attachments", [])] == ["baseline"]
 
     hero = find_result(results_dir, "home", "hero", DESKTOP_LABEL)
     assert hero["status"] == "broken"

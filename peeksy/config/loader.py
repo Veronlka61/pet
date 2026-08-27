@@ -69,10 +69,16 @@ def _resolve_site_dir(path: str) -> tuple[Path, Path]:
 
 def _load_suite_meta(suite_file: Path) -> Suite:
     """Read and validate the suite meta (name, paths, threshold, tolerance)."""
-    raw = _read_yaml(suite_file)
-    # Validate through the contract model itself (no duplicated constraints);
-    # `pages` comes from the walk below, never from the suite file.
-    return Suite.model_validate({**_mapping(raw, suite_file), "pages": []})
+    raw = _mapping(_read_yaml(suite_file), suite_file)
+    # `pages` comes from the walk below, never from the suite file — a hand
+    # written `pages:` key would otherwise be silently overridden by the walk.
+    if "pages" in raw:
+        raise ValueError(
+            f"{suite_file} must not define 'pages' — pages are discovered from "
+            "the pages/ folder (one page.yml per subfolder)"
+        )
+    # Validate through the contract model itself (no duplicated constraints).
+    return Suite.model_validate({**raw, "pages": []})
 
 
 def _load_pages(site_dir: Path) -> list[Page]:

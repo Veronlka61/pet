@@ -12,7 +12,7 @@ follow `.goga/usages/cooks/playwright.md`.
 
 import contextlib
 
-from playwright.sync_api import Locator, sync_playwright
+from playwright.sync_api import Frame, Locator, sync_playwright
 from playwright.sync_api import Page as PlaywrightPage
 
 from peeksy.config import Action, Component, Page, Viewport
@@ -30,13 +30,23 @@ ANIM_DISABLE_CSS = (
 # layout box (never `display: none`, which would reflow neighbours). `position`
 # is only forced on static elements: overwriting an existing absolute/fixed
 # position would move the element (and reflow its neighbours) — a false diff.
+# `_MASK_OFF` restores the prior inline value, so the single reused page is
+# byte-identical after a masked capture — a leaked `position: relative` would
+# re-anchor later components' absolutely-positioned descendants.
 _MASK_ON = (
     "els => els.forEach(el => {"
-    "if (getComputedStyle(el).position === 'static')"
-    "el.style.position = 'relative';"
+    "if (getComputedStyle(el).position === 'static'){"
+    "el.dataset.peeksyPos = el.style.position;"
+    "el.style.position = 'relative';}"
     "el.classList.add('peeksy-mask');})"
 )
-_MASK_OFF = "els => els.forEach(el => el.classList.remove('peeksy-mask'))"
+_MASK_OFF = (
+    "els => els.forEach(el => {"
+    "if ('peeksyPos' in el.dataset){"
+    "el.style.position = el.dataset.peeksyPos;"
+    "delete el.dataset.peeksyPos;}"
+    "el.classList.remove('peeksy-mask');})"
+)
 MASK_CSS = (
     ".peeksy-mask::after {"
     'content: ""; position: absolute; inset: 0;'
@@ -132,34 +142,49 @@ class CaptureSession:
         # An `open`/`reload` inside the setup navigates away and drops the
         # style tag injected by open_page (and the deep-link flow injects it on
         # a blank page) — determinism must be re-established after the setup.
-        _apply_determinism(target)
+        _apply_determinism(target, component.selector)
 
         # Wait for the component FIRST: the page must be settled so masked
         # zones exist in the DOM before the overlay goes on.
         component_locator = locate(target, component.selector).first
         component_locator.wait_for(state="visible")
 
-        for mask_selector in component.mask_selectors:
-            # evaluate_all, not evaluate: a mask selector legitimately matches
-            # several elements (every timestamp, every ad slot), and strict-mode
-            # evaluate would abort the capture on the second match.
-            locate(target, mask_selector).evaluate_all(_MASK_ON)
-
         try:
+            for mask_selector in component.mask_selectors:
+                # A mask selector that matches nothing is a config mistake (a
+                # typo, or a redesign dropped the element) — silently shooting
+                # anyway would let the "dynamic" region keep producing
+                # run-to-run diffs that read as visual regressions.
+                mask_locator = locate(target, mask_selector)
+                if mask_locator.count() == 0:
+                    raise ValueError(f"mask selector {mask_selector!r} matched no elements")
+                # The frame holding the masked element needs the overlay style
+                # too (CSS never crosses an iframe boundary).
+                if ">>>" in mask_selector:
+                    _apply_determinism(target, mask_selector)
+                # evaluate_all, not evaluate: a mask selector legitimately
+                # matches several elements (every timestamp, every ad slot),
+                # and strict-mode evaluate would abort the capture on the 2nd.
+                mask_locator.evaluate_all(_MASK_ON)
+
             component_locator.screenshot(type="png", path=out_path)
         except Exception:
-            # A raised screenshot error must not leave masks on the page, and
+            # Any failure here — a mask that matched nothing, a screenshot
+            # error — must not leave the masks already applied on the page, and
             # a failing unmask must not mask the original error either.
-            for mask_selector in component.mask_selectors:
-                with contextlib.suppress(Exception):
-                    locate(target, mask_selector).evaluate_all(_MASK_OFF)
+            self._unmask(target, component.mask_selectors)
             raise
         # No mask leakage onto the next component's shot.
-        for mask_selector in component.mask_selectors:
-            with contextlib.suppress(Exception):
-                locate(target, mask_selector).evaluate_all(_MASK_OFF)
+        self._unmask(target, component.mask_selectors)
 
         return out_path
+
+    @staticmethod
+    def _unmask(target: PlaywrightPage, mask_selectors: list[str]) -> None:
+        """Strip the mask class (and its injected inline `position`)."""
+        for mask_selector in mask_selectors:
+            with contextlib.suppress(Exception):
+                locate(target, mask_selector).evaluate_all(_MASK_OFF)
 
 
 # --------------------------------------------------------------------------
@@ -167,11 +192,35 @@ class CaptureSession:
 # --------------------------------------------------------------------------
 
 
-def _apply_determinism(page: PlaywrightPage) -> None:
-    """Inject the animation-disable CSS (+ mask style) and wait for fonts."""
-    page.add_style_tag(content=ANIM_DISABLE_CSS)
-    page.add_style_tag(content=MASK_CSS)
-    page.evaluate("document.fonts.ready")
+def _apply_determinism(page: PlaywrightPage, selector: str | None = None) -> None:
+    """Inject the animation-disable CSS (+ mask style) and wait for fonts.
+
+    `selector` covers components (and mask selectors) living inside an
+    `<iframe>`: CSS does not cascade across document boundaries, so the frame
+    holding the element gets its own injection. Without it, `mask_selectors`
+    inside an iframe would apply the class to nothing the overlay style can
+    reach — the dynamic region would keep rendering into the screenshot.
+    """
+    targets: list[PlaywrightPage | Frame] = [page]
+    if selector is not None and ">>>" in selector:
+        targets.append(_resolve_frame(page, selector))
+    for target in targets:
+        target.add_style_tag(content=ANIM_DISABLE_CSS)
+        target.add_style_tag(content=MASK_CSS)
+        target.evaluate("document.fonts.ready")
+
+
+def _resolve_frame(page: PlaywrightPage, selector: str) -> Frame:
+    """The `Frame` a `frame >>> inner` selector addresses."""
+    frame_part = selector.partition(">>>")[0].strip()
+    handle = page.locator(frame_part).first.element_handle()
+    if handle is None:  # unreachable: the caller just resolved this locator
+        raise RuntimeError(f"frame selector matched nothing: {frame_part!r}")
+    frame = handle.content_frame()
+    handle.dispose()
+    if frame is None:
+        raise RuntimeError(f"selector {frame_part!r} does not address an <iframe>")
+    return frame
 
 
 def locate(page: PlaywrightPage, selector: str) -> Locator:
