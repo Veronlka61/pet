@@ -10,11 +10,13 @@ the runner's exit code into `typer.Exit(code=...)` — never `sys.exit`, so pyte
 can still intercept it.
 """
 
-from typing import Annotated, Self
+import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Annotated
 
 import typer
 import yaml
-from pydantic import ValidationError
 
 from peeksy.config import load_config
 from peeksy.runner import run_generate, run_report, run_test
@@ -71,6 +73,10 @@ def report(config: ConfigOption = "./peeksy.yml") -> None:
         except RuntimeError as error:  # missing `allure` CLI, per the reporting cell
             typer.echo(str(error), err=True)
             raise typer.Exit(code=1) from error
+        except subprocess.CalledProcessError as error:
+            # allure ran and failed — surface ITS stderr, not a Python traceback.
+            typer.echo(error.stderr.decode(errors="replace") or str(error), err=True)
+            raise typer.Exit(code=1) from error
 
 
 def main() -> None:
@@ -78,23 +84,24 @@ def main() -> None:
     app()
 
 
-class _handle_config_errors:
+@contextmanager
+def _handle_config_errors() -> Iterator[None]:
     """The ONE shared config-error handler: print human-readable, exit 1.
 
     Typer has no native global exception hook, so this context manager is
     applied inside all three command bodies rather than duplicated as three
-    try/except blocks.
+    try/except blocks. `ValueError` covers pydantic's `ValidationError` and
+    the loader's non-mapping-document error; `yaml.YAMLError` needs listing
+    because parser errors (`ParserError` etc.) derive from it, not from
+    `ValueError`. `typer.Exit` passes through untouched.
     """
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, exc_type, exc_value, _traceback) -> bool:
-        if exc_type is None or issubclass(exc_type, typer.Exit):
-            return False
-        if issubclass(
-            exc_type, (ValidationError, yaml.YAMLError, FileNotFoundError, NotADirectoryError)
-        ):
-            typer.echo(f"error: {exc_value}", err=True)
-            raise typer.Exit(code=1) from exc_value
-        return False
+    try:
+        yield
+    except (
+        ValueError,
+        yaml.YAMLError,
+        FileNotFoundError,
+        NotADirectoryError,
+    ) as error:
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(code=1) from error

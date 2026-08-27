@@ -21,11 +21,12 @@ try:
                 if vp not in viewports:
                     viewports.append(vp)
         for viewport in viewports:
-            session.open_page(page, viewport)        # navigate + page setup, once
+            session.open_page(page, viewport)  # navigate + page setup, once
             for component in page.components:
                 if viewport in component.viewports:
                     session.capture_component(
-                        component, out_path=f"baselines/{page.name}/{component.name}_1280x720.png")
+                        component, out_path=f"baselines/{page.name}/{component.name}_1280x720.png"
+                    )
 finally:
     session.close()
 ```

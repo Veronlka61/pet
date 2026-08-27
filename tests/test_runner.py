@@ -16,8 +16,8 @@ directly; no browser is involved at this level.
 import inspect
 import json
 from pathlib import Path
-from typing import ClassVar
 
+import pytest
 from PIL import Image
 
 import peeksy.runner as runner_facade
@@ -83,8 +83,6 @@ class FakeCaptureSession:
     that a browser would have launched.
     """
 
-    sessions: ClassVar[list["FakeCaptureSession"]] = []
-
     def __init__(
         self,
         *,
@@ -102,7 +100,6 @@ class FakeCaptureSession:
 
     def open(self) -> None:
         self.opened = True
-        FakeCaptureSession.sessions.append(self)
 
     def close(self) -> None:
         self.closed = True
@@ -124,7 +121,6 @@ class FakeCaptureSession:
 
 def install_fake(monkeypatch, factory=None) -> FakeCaptureSession:
     """Patch `CaptureSession` in the runner module; return the instance it will build."""
-    FakeCaptureSession.sessions = []
     instance = factory() if factory else FakeCaptureSession()
     monkeypatch.setattr("peeksy.runner.runner.CaptureSession", lambda: instance)
     return instance
@@ -294,6 +290,35 @@ def test_run_test_missing_baseline_is_broken(monkeypatch, tmp_path: Path) -> Non
     assert "peeksy generate" in result["statusDetails"]["message"]
     # No comparison happened, so there is no mismatch % and no images at all.
     assert [a["name"] for a in result.get("attachments", [])] == []
+
+
+def test_run_test_unreadable_baseline_is_broken_not_fatal(monkeypatch, tmp_path: Path) -> None:
+    """One corrupt baseline PNG must not abort the run and discard other results.
+
+    Regression: `compare` reads the baseline with PIL outside any guard, so a
+    truncated file raised out of `run_test` before `write_results` — zero
+    result JSONs, every sibling outcome lost.
+    """
+    suite = make_suite(
+        tmp_path, pages=[make_page("home", [make_component("aaa"), make_component("zzz")])]
+    )
+    generate_baselines(monkeypatch, suite)
+    # Corrupt one baseline after generation (a partial write / LFS pointer).
+    baseline = Path(suite.baseline_path) / "home" / "aaa_1280x720.png"
+    baseline.write_bytes(b"\x89PNG\r\n\x1a\nTRUNCATED")
+
+    exit_code = run_test(suite, None, None)
+
+    assert exit_code == 1  # a BROKEN outcome is not a pass
+    results = sorted(
+        (read_result(p) for p in result_files(Path(suite.results_path))),
+        key=lambda r: r["name"],
+    )
+    assert len(results) == 2  # the healthy sibling is still reported
+    broken = results[0]
+    assert broken["status"] == "broken"
+    assert "comparison failed" in broken["statusDetails"]["message"]
+    assert results[1]["status"] == "passed"
 
 
 def test_run_test_empty_selection_is_noop_preserving_results(monkeypatch, tmp_path: Path) -> None:
@@ -508,13 +533,9 @@ def test_generate_is_fail_fast_and_closes_session(monkeypatch, tmp_path: Path) -
     )
     session = install_fake(monkeypatch, lambda: FakeCaptureSession(fail_components={"header"}))
 
-    try:
+    with pytest.raises(RuntimeError, match="selector"):
         run_generate(suite, None, None)
-        raised = False
-    except RuntimeError:
-        raised = True
 
-    assert raised is True
     assert session.closed is True
     # The first error aborted the run: nothing after `header` was captured.
     assert [name for name, _ in session.captured] == ["header"]

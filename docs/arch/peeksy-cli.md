@@ -338,8 +338,9 @@ page folder → component file). Target audience: the `runner` and `cli` cells t
 ```python
 from peeksy.config import load_config
 
-suite = load_config("sites/example.com")          # site folder
-suite = load_config("sites/example.com/suite.yml")  # or the suite file directly
+suite = load_config("peeksy.yml")                 # the suite file directly (any *.yml name)
+suite = load_config("sites/example.com")          # or a site folder
+suite = load_config("sites/example.com/suite.yml")  # or the suite.yml inside a folder
 ```
 
 `load_config` raises a Pydantic ValidationError with a human-readable message on a malformed
@@ -605,7 +606,7 @@ Annotations: |
     `results_dir`: directory to populate with result JSON and attachment files
 
     Algorithm:
-    1. For each `Outcome`, derive a stable testCaseId/historyId as peeksy::{suite}::{page}::{name}, the display name as {suite} / {page} / {name} [{viewport}], and the Allure suite label from the `Outcome` suite field per `allure`
+    1. For each `Outcome`, derive a stable testCaseId/historyId as peeksy::{suite}::{page}::{name}[{viewport}] (unique per (suite, page, component, viewport) so Allure history and trends keep one row per viewport), the display name as {suite} / {page} / {name} [{viewport}], and the Allure suite label from the `Outcome` suite field per `allure`
     2. For each non-None path among baseline_path, current_path, diff_path, copy the PNG into `results_dir` as an attachment; skip None paths (a BROKEN outcome may omit current_path or baseline_path)
     3. Write one result JSON with status mapped from the `Outcome` status per `allure`, attaching the copied PNGs
     4. Append statusDetails with the mismatch percent when FAILED, or with the error message when BROKEN (mismatch_percent is None — never render it for BROKEN)
@@ -765,10 +766,11 @@ Annotations: |
       `png_path`: the written PNG path (equals `out_path`)
 
       Algorithm:
-      1. For each `Action` in component.setup, execute it via Playwright according to its kind
-      2. For every mask selector of `component` (located with the same locate helper as the component selector — plain CSS, piercing, or inside an <iframe>), lay an opaque gray overlay (::after) over the matched elements per `playwright` — a solid overlay yields pixel-identical masks regardless of the underlying content, while preserving the layout box (never display: none)
-      3. Locate the `component` selector (first match) — a plain CSS selector, a piercing selector crossing shadow-DOM boundaries, or a selector inside an <iframe> via frame_locator — wait for visible, and screenshot into `out_path`
-      4. Return `out_path`
+      1. For each `Action` in component.setup, execute it via Playwright according to its kind — with the page's wait_until (an open or reload inside the setup navigates with the SAME strategy as open_page)
+      2. Re-apply the animation-disable CSS and wait for document.fonts.ready — an open or reload action inside the setup navigates away and drops the style tag injected by open_page (the deep-link flow injects it on a blank page), so determinism must be re-established after the setup actions
+      3. For every mask selector of `component` (located with the same locate helper as the component selector — plain CSS, piercing, or inside an <iframe>), lay an opaque gray overlay (::after) over the matched elements per `playwright` — a solid overlay yields pixel-identical masks regardless of the underlying content, while preserving the layout box (never display: none)
+      4. Locate the `component` selector (first match) — a plain CSS selector, a piercing selector crossing shadow-DOM boundaries, or a selector inside an <iframe> via frame_locator — wait for visible, and screenshot into `out_path`
+      5. Return `out_path`
 
       Use `playwright` for the capture routine, action execution, and masking.
       Constraints: idempotent — two captures of the same `Component` on the same open page produce pixelmatch-clean images.
@@ -802,8 +804,13 @@ session = CaptureSession()
 session.open()
 try:
     for page in suite.pages:
-        # viewports needed by this page's components (inline union)
-        viewports = {vp for c in page.components for vp in c.viewports}
+        # viewports needed by this page's components (ordered dedupe —
+        # Viewport is a Pydantic model and unhashable, so no set iteration)
+        viewports = []
+        for c in page.components:
+            for vp in c.viewports:
+                if vp not in viewports:
+                    viewports.append(vp)
         for viewport in viewports:
             session.open_page(page, viewport)        # navigate + page setup, once
             for component in page.components:
@@ -890,11 +897,11 @@ Annotations: |
 
     Algorithm:
     1. Filter suite.pages by `pages` and each page's components by `components` per `run_policy` (None => all)
-    2. Open a `CaptureSession`
+    2. Open a `CaptureSession`; the capture loop below runs in try/finally so the session is closed even when a capture error propagates
     3. For each filtered `Page`:
-       a. Compute the set of Viewports needed = union of viewports across its filtered components
+       a. Compute the ordered viewport list = unique viewports across its filtered components, deduplicated preserving first-seen order over the name-sorted components (deterministic; no set iteration)
        b. For each `Viewport`: open_page(page, viewport), then for each component that includes this `Viewport`, capture_component into {baseline_path}/{page}/{name}_{WxH}.png per `run_policy`
-    4. Close the `CaptureSession`
+    4. Close the `CaptureSession` in the finally block
 
     Use `run_policy` for path conventions and capture grouping.
     Use `CaptureSession` from Imports for capture.
@@ -911,9 +918,9 @@ Annotations: |
 
     Algorithm:
     1. Filter suite.pages by `pages` and each page's components by `components` per `run_policy` (None => all)
-    2. Open a `CaptureSession`; collect `Outcome`s
+    2. Open a `CaptureSession`; collect `Outcome`s; the capture loop below runs in try/finally so the session is closed even when an unexpected error propagates
     3. For each filtered `Page`:
-       a. Compute the set of Viewports needed = union of viewports across its filtered components
+       a. Compute the ordered viewport list = unique viewports across its filtered components, deduplicated preserving first-seen order over the name-sorted components (deterministic; no set iteration)
        b. For each `Viewport`:
           i. Try: open_page(page, viewport)
           ii. Except: append a BROKEN `Outcome` (suite = suite.name, page, name, viewport, error "page setup failed: ...", current_path None) for every component at this viewport per `run_policy`; continue to the next viewport
@@ -922,11 +929,13 @@ Annotations: |
                - Except capture error: append a BROKEN `Outcome` with error and current_path None; continue
                - If baseline {baseline_path}/{page}/{name}_{WxH}.png does not exist: append a BROKEN `Outcome` with error "baseline not found; run peeksy generate" per `run_policy`; continue
                - Resolve effective threshold/tolerance = component override ?? `suite` default per `run_policy`
-               - `compare` baseline vs current with the resolved thresholds -> `ComparisonResult`; status = PASSED if it passed, else FAILED
+               - Try: `compare` baseline vs current with the resolved thresholds -> `ComparisonResult`; Except: append a BROKEN `Outcome` with error "comparison failed: ..." (e.g. an unreadable baseline PNG); continue
+               - status = PASSED if the comparison passed, else FAILED
                - Append a PASSED/FAILED `Outcome` (suite = suite.name, page, name, viewport, status, mismatch_percent, baseline/current/diff paths, error None)
-    4. Clear the `suite` results_path of prior *-result.json and attachment files per `run_policy`
-    5. `write_results` the outcomes into the `suite` results_path
-    6. Return `exit_code` 0 if all outcomes PASSED else 1
+    4. Close the `CaptureSession` in the finally block — the browser is torn down even when an unexpected error propagates
+    5. Clear the `suite` results_path of prior *-result.json and attachment files per `run_policy`
+    6. `write_results` the outcomes into the `suite` results_path
+    7. Return `exit_code` 0 if all outcomes PASSED else 1
 
     Use `run_policy` for orchestration rules, path conventions, and capture grouping.
     Use `compare`, `ComparisonResult`, `Outcome`, `write_results` from Imports.
@@ -1022,11 +1031,18 @@ Imports:
 
 Usages:
   typer: |
-    CLI commands are Typer commands on a single Typer app. --config takes the site folder
-    (or its suite.yml). --page and --component are repeatable filters (list[str] | None);
+    CLI commands are Typer commands on a single Typer app. --config (short -c) is a
+    REQUIRED-declared Typer option with the default "./peeksy.yml" — the project-root
+    suite file; a folder (or its suite.yml) is also accepted. --page and --component
+    are repeatable filters (list[str] | None);
     both applied as an AND. Commands load the config via `load_config` and delegate to the runner.
     test prints a one-line summary and then raise typer.Exit(code=exit_code) (never sys.exit)
     so CI fails on regression and pytest can still intercept the exit.
+    ONE app-level exception handler covers every configuration error path —
+    pydantic.ValidationError, yaml.YAMLError (syntactically broken YAML never reaches
+    Pydantic), FileNotFoundError/NotADirectoryError (missing --config path) — printing a
+    human-readable message (no Python traceback) and raising typer.Exit(code=1); it is
+    shared by generate/test/report.
 
 Annotations: |
   CLI cell — Typer facade for the peeksy commands.
@@ -1041,7 +1057,7 @@ Annotations: |
   annotations: |
     peeksy generate command — capture and store baselines.
 
-    `config`: path to the site folder (or its suite.yml)
+    `config`: path to the suite file (default ./peeksy.yml) or the site folder (or its suite.yml) — declared as the --config/-c Typer option
     `page`: repeatable page name filter (None => all)
     `component`: repeatable component name filter (None => all)
 
@@ -1057,7 +1073,7 @@ Annotations: |
   annotations: |
     peeksy test command — compare against baselines and fail CI on regression.
 
-    `config`: path to the site folder (or its suite.yml)
+    `config`: path to the suite file (default ./peeksy.yml) or the site folder (or its suite.yml) — declared as the --config/-c Typer option
     `page`: repeatable page name filter (None => all)
     `component`: repeatable component name filter (None => all)
 
@@ -1075,7 +1091,7 @@ Annotations: |
   annotations: |
     peeksy report command — build the Allure HTML report.
 
-    `config`: path to the site folder (or its suite.yml)
+    `config`: path to the suite file (default ./peeksy.yml) or the site folder (or its suite.yml) — declared as the --config/-c Typer option
 
     Algorithm:
     1. `load_config` `config` into a `Suite`
@@ -1151,14 +1167,14 @@ peeksy report --config sites/example.com
 - [x] Infrastructure errors → `Status.BROKEN` → `run_test` step 3.b.ii/3.b.iii + `Outcome.status`.
 - [x] `report` builds browsable HTML → `run_report` + `build_report`.
 - [x] Invalid YAML → clear Pydantic error → `load_config` raises.
-- [x] Tool's own tests pass locally → out of architecture scope; covered by `pytest + pytest-playwright` in the task doc.
+- [x] Tool's own tests pass locally → out of architecture scope; covered by `pytest` in the task doc (the suite drives `CaptureSession` over `file://` fixtures).
 
 ## Architecture decisions (design + review passes)
 
 Decisions folded into the CODEMANIFESTs and `.usages` above:
 
 - [x] **Three-level config (variant D)** — site folder → page folder → component file; `Suite` holds `pages: list[Page]`, `url` on the page, names from folder/filenames, component names unique within a page (`config`).
-- [x] **Two-level setup actions** — `Page.setup` (once per viewport) + `Component.setup` (per component); `Action` carries 8 kinds (click/hover/scroll_to/scroll_by/fill/press/select/wait) in a short YAML form, executed by `capture` (`config`, `capture`).
+- [x] **Two-level setup actions** — `Page.setup` (once per viewport) + `Component.setup` (per component); `Action` carries 10 kinds (click/hover/scroll_to/scroll_by/fill/press/select/wait/open/reload) in a short YAML form, executed by `capture` (`config`, `capture`).
 - [x] **Split capture** — `open_page` navigates + page setup once per `(page, viewport)`; `capture_component` does component setup + mask + shot (`capture`, `runner`).
 - [x] **BROKEN no longer requires an image** — `Outcome.baseline_path`/`current_path` are `str | None`; `Outcome.error: str | None` carries the reason; `write_results` attaches only existing PNGs (`reporting`, `runner`).
 - [x] **Missing baseline is BROKEN, not FAILED** — `run_test` checks baseline existence before `compare` and emits `error="baseline not found; run 'peeksy generate'"` (`runner`).
@@ -1167,13 +1183,13 @@ Decisions folded into the CODEMANIFESTs and `.usages` above:
 - [x] **`test` exits via `typer.Exit`** — `raise typer.Exit(code=exit_code)` after a one-line summary; never `sys.exit` (`cli`).
 - [x] **Missing `allure` CLI is a clean error** — `build_report` checks `shutil.which("allure")`; the `report` command prints a clear message instead of a traceback (`reporting`, `cli`).
 - [x] **Results dir cleared per run** — `run_test` removes prior `*-result.json`/attachment files before writing (`runner`).
-- [x] **Page-namespaced identity** — display name `{page} / {name} [{viewport}]`, `testCaseId` `peeksy::{page}::{name}`, baseline `{baseline_path}/{page}/{name}_{WxH}.png` (`reporting`, `runner`).
+- [x] **Page-namespaced identity** — baseline `{baseline_path}/{page}/{name}_{WxH}.png`; superseded by the suite-namespaced viewport-suffixed identity below (`reporting`, `runner`).
 - [x] **Piercing / iframe selectors supported** — a component `selector` may cross shadow-DOM boundaries (`>>`) or live inside an `<iframe>` (`frame_locator`); `capture_component` localizes it the same way as a plain CSS selector (`capture`).
 - [x] **High config coupling is intentional** — `runner` and `capture` import 4 of `config`'s 6 types by role (orchestrator + engine work with all domain models); boundaries are by responsibility, not import count (design decision #8).
 - [x] **Configurable navigation wait** — `Page.wait_until` (networkidle | domcontentloaded | load, default networkidle) forwarded to `page.goto`; live pages (polling/websockets/analytics) use domcontentloaded plus explicit `wait` actions instead of never reaching networkidle (`config`, `capture`, `playwright`).
 - [x] **Deterministic capture order** — `Page.components` are kept name-sorted, so capture order never depends on filesystem ordering; a component's `setup` is self-sufficient, and `reload` (`- reload: {}`) gives point-in-time clean-page isolation without a global per-component reload tax (`config`, `runner`, `capture`, `playwright`).
 - [x] **`url` ⇄ `open` exclusivity** — `Page.url: str | None`; `url = None` requires `setup` to start with an `open` action (deep-link flow), a set `url` forbids `open` as the first action — a `model_validator` enforces both, so the page is never navigated twice and never left without a start URL; `open_page` skips `goto` when `url` is None (`config`, `capture`).
-- [x] **Suite-namespaced report identity** — `Outcome.suite: str` (from `Suite.name`); `testCaseId`/`historyId` = `peeksy::{suite}::{page}::{name}`, display name `{suite} / {page} / {name} [{viewport}]`, Allure suite label = real site name — the same component name on different sites never collapses in history/trends (`reporting`, `runner`).
+- [x] **Suite-namespaced report identity** — `Outcome.suite: str` (from `Suite.name`); `testCaseId`/`historyId` = `peeksy::{suite}::{page}::{name}[{viewport}]`, display name `{suite} / {page} / {name} [{viewport}]`, Allure suite label = real site name — the same component name on different sites, or at different viewports, never collapses in history/trends (`reporting`, `runner`).
 - [x] **`mismatch_percent` is `None` for BROKEN** — no comparison happened, so the percent does not exist; a fake `0.0` would read as a perfect match in numeric filtering/aggregation. `write_results` renders the percent in statusDetails only for FAILED (`reporting`).
 - [x] **Artifact paths resolve against the site folder** — `load_config` normalizes relative `baseline_path`/`results_path`/`report_path` to absolute against the site dir (absolute pass through), so generate/test behave identically from any CWD — no silent BROKEN from a different working directory (`config`).
 - [x] **Masks are selector-symmetric** — `mask_selectors` are located with the same locate helper as the component selector (plain CSS, piercing `>>`, or inside an `<iframe>`), so any dynamic zone reachable from the component is maskable (`capture`, `playwright`).

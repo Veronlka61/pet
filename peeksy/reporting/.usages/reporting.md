@@ -11,19 +11,31 @@ report. Target audience: the `runner` cell.
 from peeksy.reporting import write_results, Outcome
 
 outcomes = [
-    Outcome(suite="example.com", page="home", name="header", viewport="1280x720", status="FAILED",
-            mismatch_percent=2.34,
-            baseline_path="baselines/home/header_1280x720.png",
-            current_path="results/home/header_1280x720.current.png",
-            diff_path="results/home/header_1280x720.diff.png",
-            error=None),
+    Outcome(
+        suite="example.com",
+        page="home",
+        name="header",
+        viewport="1280x720",
+        status="FAILED",
+        mismatch_percent=2.34,
+        baseline_path="baselines/home/header_1280x720.png",
+        current_path="results/home/header_1280x720.current.png",
+        diff_path="results/home/header_1280x720.diff.png",
+        error=None,
+    ),
     # BROKEN: capture failed — no current PNG, no comparison, mismatch_percent is None
-    Outcome(suite="example.com", page="home", name="sidebar", viewport="1280x720", status="BROKEN",
-            mismatch_percent=None,
-            baseline_path="baselines/home/sidebar_1280x720.png",
-            current_path=None,
-            diff_path=None,
-            error="selector '.sidebar' not found within timeout"),
+    Outcome(
+        suite="example.com",
+        page="home",
+        name="sidebar",
+        viewport="1280x720",
+        status="BROKEN",
+        mismatch_percent=None,
+        baseline_path="baselines/home/sidebar_1280x720.png",
+        current_path=None,
+        diff_path=None,
+        error="selector '.sidebar' not found within timeout",
+    ),
 ]
 write_results(outcomes, results_dir="results")
 ```

@@ -37,8 +37,8 @@ def run_generate(
         return  # a no-op run must not launch a browser
 
     session = CaptureSession()
-    session.open()
     try:
+        session.open()
         for page, page_components in selected:
             for viewport, at_viewport in _group_by_viewport(page_components):
                 session.open_page(page, viewport)
@@ -65,8 +65,8 @@ def run_test(
 
     outcomes: list[Outcome] = []
     session = CaptureSession()
-    session.open()
     try:
+        session.open()
         for page, page_components in selected:
             for viewport, at_viewport in _group_by_viewport(page_components):
                 outcomes.extend(_run_viewport(suite, session, page, viewport, at_viewport))
@@ -134,7 +134,23 @@ def _run_viewport(
             )
             continue
 
-        result = _compare_component(suite, component, baseline, current)
+        try:
+            result = _compare_component(suite, component, baseline, current)
+        except Exception as error:  # noqa: BLE001 — e.g. an unreadable baseline PNG
+            # An unreadable/corrupt baseline is infrastructure damage, not a
+            # visual regression — and it must never abort the run: `test`
+            # records it BROKEN like any capture error and keeps reporting the
+            # remaining components.
+            outcomes.append(
+                _broken(
+                    suite,
+                    page.name,
+                    component.name,
+                    label,
+                    error=f"comparison failed: {error}",
+                )
+            )
+            continue
         outcomes.append(
             Outcome(
                 suite=suite.name,

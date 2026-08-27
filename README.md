@@ -8,6 +8,53 @@ Playwright-based visual regression CLI.
 
 Contract source: the six `peeksy/*/CODEMANIFEST` files (read-only, authoritative).
 
+## Usage
+
+```
+peeksy generate|test [--config PATH] [--page NAME]... [--component NAME]...
+peeksy report [--config PATH]
+```
+
+- `--config` / `-c` — suite file or site folder. Default `./peeksy.yml`; a folder
+  looks up its `suite.yml`.
+- `--page`, `--component` — repeatable name filters, combined as AND. `test`
+  applies them to decide which baselines to re-capture and compare.
+- Exit codes: `test` exits 0 only when every selected component PASSED; any
+  FAILED (visual regression) or BROKEN (infrastructure failure — missing
+  baseline, selector not found, unreadable image) outcome exits 1.
+
+Configuration is a site folder: `suite.yml` plus `pages/<page>/page.yml` and
+sibling `<component>.yml` files. Full reference: `peeksy/config/.usages/config.md`.
+
+```yaml
+# peeksy.yml (or sites/example.com/suite.yml)
+name: example.com
+baseline_path: baselines   # relative paths resolve against the site folder
+results_path: results
+report_path: report
+threshold: 0.1             # per-pixel color sensitivity, (0..1)
+tolerance: 0.5             # allowed mismatch %, (0..100]
+```
+
+```yaml
+# pages/home/page.yml
+url: https://example.com/
+wait_until: networkidle    # or domcontentloaded / load for live pages
+```
+
+```yaml
+# pages/home/header.yml
+selector: "#header"
+mask_selectors: [".timestamp"]  # dynamic regions covered with a gray overlay
+viewports: [{width: 1280, height: 720}]
+```
+
+## Requirements
+
+- Python >= 3.10
+- Chromium — `peeksy` drives it via Playwright; `generate` and `test` need it
+- `allure` CLI + a JDK — only for `peeksy report` (optional for the other two)
+
 ## Development
 
 ```bash

@@ -296,7 +296,8 @@ def test_invalid_config_is_human_readable_without_traceback(
     result = runner.invoke(app, [command, "--config", str(suite_file)])
 
     assert result.exit_code == 1
-    assert "Traceback (most recent call last)" not in result.output
+    # The error was HANDLED, not raised: only the exit exception may remain.
+    assert result.exception is None or isinstance(result.exception, SystemExit)
     # The offending field is named, so the user knows what to fix.
     assert "threshold" in result.output
 
@@ -310,7 +311,30 @@ def test_broken_yaml_is_human_readable_without_traceback(tmp_path: Path, command
     result = runner.invoke(app, [command, "--config", str(suite_file)])
 
     assert result.exit_code == 1
-    assert "Traceback (most recent call last)" not in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert result.output.startswith("error:")
+
+
+@pytest.mark.parametrize(
+    ("content", "label"),
+    [("", "empty"), ("- just\n- a\n- list\n", "a YAML list"), ("42\n", "a bare scalar")],
+)
+@pytest.mark.parametrize("command", ["generate", "test", "report"])
+def test_non_mapping_config_is_human_readable_without_traceback(
+    tmp_path: Path, command: str, content: str, label: str
+) -> None:
+    """A non-mapping document raises the loader's `ValueError` — handled, no traceback."""
+    suite_file = tmp_path / "suite.yml"
+    suite_file.write_text(content, encoding="utf-8")
+
+    result = runner.invoke(app, [command, "--config", str(suite_file)])
+
+    # Regression: `ValueError` is not a `ValidationError` — an unhandled raise
+    # here would surface as result.exception with empty output.
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert result.output.startswith("error:")
+    assert "suite.yml" in result.output
 
 
 @pytest.mark.parametrize("command", ["generate", "test", "report"])
@@ -320,21 +344,48 @@ def test_missing_config_path_is_human_readable_without_traceback(
     result = runner.invoke(app, [command, "--config", str(tmp_path / "nope.yml")])
 
     assert result.exit_code == 1
-    assert "Traceback (most recent call last)" not in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
     # The path is named so the message is actionable.
     assert "nope.yml" in result.output
 
 
+def test_report_surfaces_allure_stderr_on_cli_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """allure exiting non-zero must print ITS stderr, not a Python traceback."""
+    import subprocess as subprocess_module
+
+    suite_file = _write_site(tmp_path)
+
+    def failing_run(*_args: object, **_kwargs: object) -> None:
+        raise subprocess_module.CalledProcessError(
+            returncode=1, cmd=["allure", "generate"], stderr=b"allure: no results found"
+        )
+
+    # allure "is installed" (the which check passes) but its run fails.
+    monkeypatch.setattr("peeksy.reporting.report.shutil.which", lambda _name: "/usr/bin/allure")
+    monkeypatch.setattr("peeksy.reporting.report.subprocess.run", failing_run)
+    result = runner.invoke(app, ["report", "--config", str(suite_file)])
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "allure: no results found" in result.output
+
+
 def test_single_handler_is_shared_not_duplicated() -> None:
-    """The contract wants ONE handler applied to all three bodies — no copy-paste."""
+    """The contract wants ONE config-error handler applied to all three bodies — no copy-paste.
+
+    Counts only handlers naming `ValueError` (the config-error family's common
+    base); the `report` command's separate `CalledProcessError` handler for
+    allure stderr is a different concern and must not be counted.
+    """
     import ast
 
     source = inspect.getsource(__import__("peeksy.cli.app", fromlist=["app"]))
     tree = ast.parse(source)
-    handlers = [
+    config_errors = [
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.ExceptHandler) and "Exit" not in ast.unparse(node.type)
+        if isinstance(node, ast.ExceptHandler) and "ValueError" in ast.unparse(node.type)
     ]
-    config_errors = [handler for handler in handlers if ast.unparse(handler.type) != "typer.Exit"]
     assert len(config_errors) == 1

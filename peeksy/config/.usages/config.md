@@ -10,8 +10,8 @@ page folder → component file). Target audience: the `runner` and `cli` cells t
 ```python
 from peeksy.config import load_config
 
-suite = load_config("peeksy.yml")                 # the suite file directly (any *.yml name)
-suite = load_config("sites/example.com")          # or a site folder
+suite = load_config("peeksy.yml")  # the suite file directly (any *.yml name)
+suite = load_config("sites/example.com")  # or a site folder
 suite = load_config("sites/example.com/suite.yml")  # or the suite.yml inside a folder
 ```
 

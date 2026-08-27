@@ -89,6 +89,10 @@ def _argument_for(kind: str, arg: object) -> dict[str, object]:
         x, y = arg
         return {"kind": "scroll_by", "target": None, "value": f"{x},{y}"}
 
+    if kind == "scroll_by" and isinstance(arg, (int, float)) and not isinstance(arg, bool):
+        # The documented form is an unquoted YAML number: `- scroll_by: 300`.
+        return {"kind": "scroll_by", "target": None, "value": str(arg)}
+
     if isinstance(arg, str):
         if kind in _TARGET_FROM_STRING:
             return {"kind": kind, "target": arg, "value": None}

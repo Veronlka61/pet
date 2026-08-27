@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 from allure_commons.model2 import Attachment, Label, Status, StatusDetails, TestResult
+from attr import asdict
 
 from peeksy.reporting.outcome import Outcome
 
@@ -59,7 +60,9 @@ def write_results(outcomes: list[Outcome], results_dir: str) -> None:
             attachments=attachments,
         )
         (target / f"{result.uuid}-result.json").write_text(
-            json.dumps(result.to_dict() if hasattr(result, "to_dict") else _as_dict(result)),
+            json.dumps(
+                asdict(result, filter=lambda _, value: value or value is False), default=str
+            ),
             encoding="utf-8",
         )
 
@@ -78,10 +81,3 @@ def _status_details(outcome: Outcome) -> StatusDetails:
     if outcome.status == "BROKEN":
         return StatusDetails(message=outcome.error)
     return None
-
-
-def _as_dict(item: object) -> dict:
-    """Serialize an allure-commons attrs record, dropping None/empty fields."""
-    from attr import asdict
-
-    return asdict(item, filter=lambda _, value: value or value is False)

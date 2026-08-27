@@ -10,6 +10,8 @@ Contract source: `peeksy/capture/CODEMANIFEST` (read-only); execution details
 follow `.goga/usages/cooks/playwright.md`.
 """
 
+import contextlib
+
 from playwright.sync_api import Locator, sync_playwright
 from playwright.sync_api import Page as PlaywrightPage
 
@@ -25,9 +27,17 @@ ANIM_DISABLE_CSS = (
 
 # Opaque gray overlay driven by a class, so a masked region is pixel-identical
 # across runs regardless of what is underneath — while the element keeps its
-# layout box (never `display: none`, which would reflow neighbours).
+# layout box (never `display: none`, which would reflow neighbours). `position`
+# is only forced on static elements: overwriting an existing absolute/fixed
+# position would move the element (and reflow its neighbours) — a false diff.
+_MASK_ON = (
+    "els => els.forEach(el => {"
+    "if (getComputedStyle(el).position === 'static')"
+    "el.style.position = 'relative';"
+    "el.classList.add('peeksy-mask');})"
+)
+_MASK_OFF = "els => els.forEach(el => el.classList.remove('peeksy-mask'))"
 MASK_CSS = (
-    ".peeksy-mask { position: relative; }"
     ".peeksy-mask::after {"
     'content: ""; position: absolute; inset: 0;'
     "background: #808080; z-index: 99999;}"
@@ -46,6 +56,7 @@ class CaptureSession:
         self._browser = None
         self._context = None
         self._page: PlaywrightPage | None = None
+        self._wait_until = "networkidle"
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -59,23 +70,34 @@ class CaptureSession:
     def open(self) -> None:
         """Launch headless Chromium and create one DPR=1 context with one page."""
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=True)
-        self._context = self._browser.new_context(
-            device_scale_factor=1,
-        )
-        self._context.set_default_timeout(ACTION_TIMEOUT_MS)
-        self._page = self._context.new_page()
+        try:
+            self._browser = self._playwright.chromium.launch(headless=True)
+            self._context = self._browser.new_context(
+                device_scale_factor=1,
+            )
+            self._context.set_default_timeout(ACTION_TIMEOUT_MS)
+            self._page = self._context.new_page()
+        except Exception:
+            # A partial start must not leak the driver or browser process.
+            self.close()
+            raise
 
     def close(self) -> None:
-        """Tear down the context, browser, and Playwright; safe to call twice."""
-        for teardown, target in (
-            (lambda: self._context.close(), self._context),
-            (lambda: self._browser.close(), self._browser),
-            (lambda: self._playwright.stop(), self._playwright),
-        ):
-            if target is None:
-                continue
-            teardown()
+        """Tear down the context, browser, and Playwright; safe to call twice.
+
+        Each step is isolated: a teardown failure (plausible when the browser
+        process already died) must not skip the remaining steps or replace a
+        capture error raised through the runner's `finally: session.close()`.
+        """
+        with contextlib.suppress(Exception):
+            if self._context is not None:
+                self._context.close()
+        with contextlib.suppress(Exception):
+            if self._browser is not None:
+                self._browser.close()
+        with contextlib.suppress(Exception):
+            if self._playwright is not None:
+                self._playwright.stop()
         self._page = None
         self._context = None
         self._browser = None
@@ -87,6 +109,7 @@ class CaptureSession:
         """Navigate to `page.url` at `viewport` and run its setup once."""
         target = self.page
         target.set_viewport_size({"width": viewport.width, "height": viewport.height})
+        self._wait_until = page.wait_until
 
         # url=None is the deep-link flow: validation guarantees setup starts
         # with an `open` action, which performs the navigation below.
@@ -100,7 +123,11 @@ class CaptureSession:
         """Capture one component on the currently open page into `out_path`."""
         target = self.page
 
-        run_actions(target, component.setup, wait_strategy="networkidle")
+        # The page's wait_until applies here too (open_page stored it): the
+        # contract requires open/reload inside a component setup to navigate
+        # with the SAME strategy as open_page — hardcoding networkidle would
+        # hang a live page configured for domcontentloaded.
+        run_actions(target, component.setup, wait_strategy=self._wait_until)
 
         # An `open`/`reload` inside the setup navigates away and drops the
         # style tag injected by open_page (and the deep-link flow injects it on
@@ -113,14 +140,24 @@ class CaptureSession:
         component_locator.wait_for(state="visible")
 
         for mask_selector in component.mask_selectors:
-            locate(target, mask_selector).evaluate("el => el.classList.add('peeksy-mask')")
+            # evaluate_all, not evaluate: a mask selector legitimately matches
+            # several elements (every timestamp, every ad slot), and strict-mode
+            # evaluate would abort the capture on the second match.
+            locate(target, mask_selector).evaluate_all(_MASK_ON)
 
         try:
             component_locator.screenshot(type="png", path=out_path)
-        finally:
-            # No mask leakage onto the next component's shot.
+        except Exception:
+            # A raised screenshot error must not leave masks on the page, and
+            # a failing unmask must not mask the original error either.
             for mask_selector in component.mask_selectors:
-                locate(target, mask_selector).evaluate("el => el.classList.remove('peeksy-mask')")
+                with contextlib.suppress(Exception):
+                    locate(target, mask_selector).evaluate_all(_MASK_OFF)
+            raise
+        # No mask leakage onto the next component's shot.
+        for mask_selector in component.mask_selectors:
+            with contextlib.suppress(Exception):
+                locate(target, mask_selector).evaluate_all(_MASK_OFF)
 
         return out_path
 
@@ -140,21 +177,16 @@ def _apply_determinism(page: PlaywrightPage) -> None:
 def locate(page: PlaywrightPage, selector: str) -> Locator:
     """Resolve a selector the same way for components AND masks.
 
-    Plain CSS goes straight to `page.locator`. A piercing selector `a >> b`
-    crosses shadow-DOM boundaries (Playwright's `>>` chaining handles this
-    natively). A selector addressing content inside an `<iframe>` is routed
-    through `frame_locator`.
+    Plain CSS goes straight to `page.locator` — including a piercing selector
+    `a >> b`, whose `>>` chaining Playwright resolves natively. A selector
+    addressing content inside an `<iframe>` (`<frame> >>> <inner>`) is routed
+    through `frame_locator`. The `>>>` separator is the iframe marker: keying
+    on a literal `iframe` prefix would misroute plain CSS that targets the
+    `<iframe>` element itself (`iframe.ad` has no inner selector to split).
     """
-    if ">>" in selector and ">>>" not in selector:
-        # Playwright's `>>` chaining resolves shadow-piercing selectors.
-        return page.locator(selector)
-
-    if selector.startswith("iframe"):
-        # `<iframe selector> >>> <inner selector>` — the design's iframe form.
+    if ">>>" in selector:
         frame_part, _, inner = selector.partition(">>>")
-        frame_locator = page.frame_locator(frame_part.strip())
-        return frame_locator.locator(inner.strip())
-
+        return page.frame_locator(frame_part.strip()).locator(inner.strip())
     return page.locator(selector)
 
 

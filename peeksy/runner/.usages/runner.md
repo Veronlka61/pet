@@ -12,8 +12,8 @@ from peeksy.config import load_config
 from peeksy.runner import run_generate
 
 suite = load_config("sites/example.com")
-run_generate(suite, pages=None, components=None)             # everything
-run_generate(suite, pages=["home"], components=["header"])   # one component on one page
+run_generate(suite, pages=None, components=None)  # everything
+run_generate(suite, pages=["home"], components=["header"])  # one component on one page
 ```
 
 `generate` writes baseline PNGs into `suite.baseline_path` as `{page}/{name}_{WxH}.png`.

@@ -8,7 +8,7 @@ code-stack traces, algorithms, cross-cutting concerns, usages, and test scenario
 - **Source architecture**: `docs/arch/peeksy-cli.md`
 - **Source task**: `docs/tasks/peeksy-cli.md`
 - **Language**: Python (cell = package with `CODEMANIFEST` + `__init__.py`)
-- **Base usages/annotations**: none (`.goga/config.yml` absent)
+- **Base usages/annotations**: none declared (`.goga/config.yml` exists — image `qarium/goga-python-3.14:1.1`, language `python` — but declares no project-wide mandatory usages/annotations)
 
 ---
 

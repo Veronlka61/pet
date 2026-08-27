@@ -286,6 +286,102 @@ def test_locate_resolves_piercing_and_iframe_selectors(tmp_path: Path) -> None:
         session.close()
 
 
+def test_mask_selector_matching_several_elements(tmp_path: Path) -> None:
+    """A mask selector matching N elements masks ALL of them — not a crash.
+
+    Regression: strict-mode `evaluate` aborted the capture on the second match,
+    even though masking every timestamp/ad-slot is the normal masking case.
+    """
+    html = tmp_path / "site" / "index.html"
+    html.parent.mkdir(parents=True)
+    html.write_text(
+        """<!DOCTYPE html><html><body>
+        <div id="widget" style="width: 300px; height: 60px;">
+          <span class="ts" style="display:inline-block;width:60px;height:20px">1:00</span>
+          <span class="ts" style="display:inline-block;width:60px;height:20px">2:00</span>
+          <span class="ts" style="display:inline-block;width:60px;height:20px">3:00</span>
+        </div>
+        </body></html>""",
+        encoding="utf-8",
+    )
+    session = CaptureSession()
+    session.open()
+    try:
+        session.open_page(Page(name="home", url=html.as_uri(), wait_until="load"), VP)
+        widget = Component(
+            name="widget",
+            selector="#widget",
+            mask_selectors=[".ts"],
+            viewports=[VP],
+        )
+        out_path = str(tmp_path / "widget.png")
+        session.capture_component(widget, out_path)
+        # Every match carries the opaque overlay — all three became mask-gray.
+        with Image.open(out_path) as image:
+            raw = image.convert("RGBA").tobytes()
+        needle = bytes(MASK_GRAY)
+        gray = sum(1 for i in range(0, len(raw), 4) if raw[i : i + 4] == needle)
+        assert gray >= 3 * 60 * 20
+    finally:
+        session.close()
+
+
+def test_locate_routes_iframe_element_plain_css(tmp_path: Path) -> None:
+    """Plain CSS targeting the <iframe> element itself must reach page.locator.
+
+    Regression: keying the iframe branch on a literal `iframe` prefix parsed
+    `iframe.ad` as frame+empty-inner and crashed in Playwright's selector
+    parser. The `>>>` separator — not the prefix — is the iframe marker.
+    """
+    from peeksy.capture.session import locate
+
+    html = tmp_path / "site" / "index.html"
+    html.parent.mkdir(parents=True)
+    html.write_text(
+        """<!DOCTYPE html><html><body>
+        <iframe class="ad" style="width: 200px; height: 50px;" src="about:blank"></iframe>
+        </body></html>""",
+        encoding="utf-8",
+    )
+    session = CaptureSession()
+    session.open()
+    try:
+        session.open_page(Page(name="home", url=html.as_uri(), wait_until="load"), VP)
+        assert locate(session.page, "iframe.ad").count() == 1
+        assert locate(session.page, "iframe").count() == 1
+        # The iframe form still routes through frame_locator.
+        assert locate(session.page, "iframe.ad >>> body").count() == 1
+    finally:
+        session.close()
+
+
+def test_component_setup_uses_page_wait_until(tmp_path: Path) -> None:
+    """open/reload inside a component setup navigates with the PAGE's strategy.
+
+    Regression: the component setup hardcoded networkidle, so a page configured
+    `domcontentloaded` (live pages never reach networkidle) timed out on every
+    component whose setup starts with reload.
+    """
+    html = fixture_site(tmp_path / "site")
+    session = CaptureSession()
+    session.open()
+    try:
+        page = Page(name="live", url=html.as_uri(), wait_until="domcontentloaded")
+        component = Component(
+            name="header-reload",
+            selector="#header",
+            viewports=[VP],
+            setup=[Action(kind="reload", target=None, value=None)],
+        )
+        session.open_page(page, VP)
+        session.capture_component(component, str(tmp_path / "reloaded.png"))
+        # The stored strategy — not a hardcoded networkidle — reached reload.
+        assert session._wait_until == "domcontentloaded"
+        assert (tmp_path / "reloaded.png").exists()
+    finally:
+        session.close()
+
+
 def _has_pixel(png_path: str, rgba: tuple[int, int, int, int]) -> bool:
     """Whether any pixel of the PNG is exactly `rgba` (the mask-gray scan).
 

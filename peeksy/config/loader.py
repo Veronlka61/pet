@@ -14,17 +14,11 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import TypeAdapter, ValidationError
 
 from peeksy.config.models import Component, Page, Suite
 
 PAGE_FILE = "page.yml"
 SUITE_FILE = "suite.yml"
-
-# A page/component document must be a YAML mapping; validating the shape here
-# surfaces a non-mapping file as a ValidationError (what the CLI handler
-# expects) instead of a stray TypeError/ValueError.
-_MAPPING = TypeAdapter(dict[str, object])
 
 
 def load_config(path: str) -> Suite:
@@ -126,15 +120,15 @@ def _read_yaml(path: Path) -> object:
 def _mapping(raw: object, path: Path) -> dict[str, object]:
     """Require a YAML mapping document, reported with the offending file.
 
-    Pydantic's `ValidationError` is not constructible by user code, so a
-    non-mapping document is raised as a `ValueError` carrying the file path.
+    Deliberately a `ValueError`, not a `TypeError`: it is a user configuration
+    problem, and `ValueError` is the base the CLI's shared handler catches
+    (also covering `ValidationError` and `yaml.YAMLError`, its subclasses).
     """
-    try:
-        return _MAPPING.validate_python(raw)
-    except ValidationError as error:
-        raise ValueError(
+    if not isinstance(raw, dict):
+        raise ValueError(  # noqa: TRY004 — config error, not a programming error
             f"{path} must contain a YAML mapping of keys to values (got {type(raw).__name__})"
-        ) from error
+        )
+    return raw
 
 
 def _normalize(value: str, site_dir: Path) -> str:
