@@ -369,16 +369,16 @@ or nothing (default stabilization); open takes a URL value. `- reload: {}` parse
 
 **CRITICAL: `CODEMANIFEST` files — read-only contract definitions. Do NOT modify them. If implementation does not match the contract, fix the implementation — never fix the contract.**
 
-- [ ] **Contract tests** (`tests/test_config_loader.py`): `load_config` importable from `peeksy.config`;
+- [x] **Contract tests** (`tests/test_config_loader.py`): `load_config` importable from `peeksy.config`;
       signature `load_config(path: str) -> Suite` via `inspect` (expected to fail now)
-- [ ] **Code**: create `peeksy/config/loader.py` — implement `load_config` per the 7-step trace above;
+- [x] **Code**: create `peeksy/config/loader.py` — implement `load_config` per the 7-step trace above;
       internal helpers (`_resolve_site_dir`, `_parse_action`, page/component walking) stay private in
       the same file; use `yaml.safe_load`
-- [ ] **Code**: normalize relative `baseline_path`/`results_path`/`report_path` against the resolved
+- [x] **Code**: normalize relative `baseline_path`/`results_path`/`report_path` against the resolved
       site folder; absolute paths pass through unchanged
-- [ ] **Code**: add `load_config` to the facade `__all__` in `peeksy/config/__init__.py`
-- [ ] **Interface verification**: `uv run pytest tests/test_config_loader.py -v` — contract tests pass
-- [ ] **Logic tests** (`tests/test_config_loader.py`):
+- [x] **Code**: add `load_config` to the facade `__all__` in `peeksy/config/__init__.py`
+- [x] **Interface verification**: `uv run pytest tests/test_config_loader.py -v` — contract tests pass
+- [x] **Logic tests** (`tests/test_config_loader.py`):
       `test_load_config_builds_suite_from_site_folder` (design scenario: site folder with
       `suite.yml` threshold=0.1 tolerance=0.5, `pages/home/page.yml` with `- click: "#cookie"`,
       `pages/home/header.yml` with viewports `[{1280,720}]`; assert `pages[0].name == "home"`,
@@ -392,11 +392,11 @@ or nothing (default stabilization); open takes a URL value. `- reload: {}` parse
       `test_load_config_rejects_duplicate_component_name_within_page`;
       edge — explicit `*.yml` suite file accepted under any filename (parent = site dir);
       folder arg looks up `suite.yml`; empty `pages/` → `Suite(pages=[])`; missing path → `FileNotFoundError`
-- [ ] **Debugging**: `uv run pytest tests/test_config_loader.py tests/test_config_models.py -v` — fix
+- [x] **Debugging**: `uv run pytest tests/test_config_loader.py tests/test_config_models.py -v` — fix
       implementation until all pass (do NOT fix test code)
-- [ ] **Contract re-verification**: `load_config` signature, return type, and facade exposure match
+- [x] **Contract re-verification**: `load_config` signature, return type, and facade exposure match
       `peeksy/config/CODEMANIFEST`
-- [ ] **Lint**: `uv run ruff check peeksy/config tests/test_config_loader.py` + `uv run ruff format --check peeksy/config tests/test_config_loader.py`
+- [x] **Lint**: `uv run ruff check peeksy/config tests/test_config_loader.py` + `uv run ruff format --check peeksy/config tests/test_config_loader.py`
 
 ### Task 4: `peeksy/compare` — `ComparisonResult` + `compare` (TDD)
 

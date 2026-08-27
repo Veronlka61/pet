@@ -49,8 +49,11 @@ WAIT_UNTIL_VALUES = ("networkidle", "domcontentloaded", "load")
 
 
 def test_facade_exposes_all_five_models() -> None:
-    assert set(config_facade.__all__) == {"Viewport", "Action", "Component", "Page", "Suite"}
-    for name in config_facade.__all__:
+    # Task 3 adds `load_config` to the same facade, so assert the five models
+    # as a superset rather than exact equality.
+    exported_models = {"Viewport", "Action", "Component", "Page", "Suite"}
+    assert exported_models <= set(config_facade.__all__)
+    for name in exported_models:
         exported = getattr(config_facade, name)
         assert inspect.isclass(exported)
         assert issubclass(exported, BaseModel)
