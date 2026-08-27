@@ -123,13 +123,8 @@ class Action(BaseModel):
                 problems.append(f"{self.kind!r} takes no {label}, got {forbidden!r}")
         if self.kind == "scroll_by" and self.value is not None:
             problems.extend(_scroll_by_problems(self.value))
-        if (
-            self.kind == "wait"
-            and self.target is None
-            and self.value not in (None, "hidden")
-            and not self.value.isdigit()
-        ):
-            problems.append(f"wait takes whole milliseconds, got {self.value!r}")
+        if self.kind == "wait" and self.value is not None:
+            problems.extend(_wait_problems(self.target, self.value))
         if problems:
             raise ValueError("; ".join(problems))
         return self
@@ -137,11 +132,33 @@ class Action(BaseModel):
 
 def _scroll_by_problems(value: str) -> list[str]:
     """The capture cell splits `scroll_by` on `,` and `int()`s each part — a
-    fractional or non-numeric part must fail HERE as a config error."""
+    part `int()` would reject must fail HERE as a config error. `str.isdigit`
+    is not the test (it accepts Unicode digits like `"²"` that `int()` rejects);
+    parsing is the only faithful oracle."""
     parts = value.split(",")
-    if len(parts) not in (1, 2) or not all(part.strip().lstrip("+-").isdigit() for part in parts):
+    if len(parts) not in (1, 2) or any(_int_fails(part) for part in parts):
         return [f"scroll_by takes whole pixels or [x, y], got {value!r}"]
     return []
+
+
+def _wait_problems(target: str | None, value: str) -> list[str]:
+    """`wait`'s value is either `"hidden"` (only WITH a target) or whole
+    milliseconds. A target-present action never pauses, so any other value
+    there is a config mistake, not a no-op to shoot through."""
+    if value == "hidden":
+        return [] if target is not None else ['wait "hidden" needs a target selector']
+    if _int_fails(value):
+        return [f"wait takes whole milliseconds, got {value!r}"]
+    return []
+
+
+def _int_fails(value: str) -> bool:
+    """Whether the capture cell's `int()` would reject this scalar."""
+    try:
+        int(value.strip())
+    except ValueError:
+        return True
+    return False
 
 
 def _pixels(value: object) -> int:

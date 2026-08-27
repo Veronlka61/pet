@@ -155,8 +155,8 @@ class CaptureSession:
                 # typo, or a redesign dropped the element) — silently shooting
                 # anyway would let the "dynamic" region keep producing
                 # run-to-run diffs that read as visual regressions.
-                mask_locator = locate(target, mask_selector)
-                if mask_locator.count() == 0:
+                mask_locators = _mask_locators(target, mask_selector)
+                if sum(locator.count() for locator in mask_locators) == 0:
                     raise ValueError(f"mask selector {mask_selector!r} matched no elements")
                 # The frame or shadow root holding the masked element needs the
                 # overlay style too — CSS never crosses an iframe boundary, and
@@ -165,7 +165,8 @@ class CaptureSession:
                 # evaluate_all, not evaluate: a mask selector legitimately
                 # matches several elements (every timestamp, every ad slot),
                 # and strict-mode evaluate would abort the capture on the 2nd.
-                mask_locator.evaluate_all(_MASK_ON)
+                for locator in mask_locators:
+                    locator.evaluate_all(_MASK_ON)
 
             component_locator.screenshot(type="png", path=out_path)
         except Exception:
@@ -184,7 +185,8 @@ class CaptureSession:
         """Strip the mask class (and its injected inline `position`)."""
         for mask_selector in mask_selectors:
             with contextlib.suppress(Exception):
-                locate(target, mask_selector).evaluate_all(_MASK_OFF)
+                for locator in _mask_locators(target, mask_selector):
+                    locator.evaluate_all(_MASK_OFF)
 
 
 # --------------------------------------------------------------------------
@@ -203,12 +205,19 @@ def _apply_determinism(page: PlaywrightPage, selector: str | None = None) -> Non
     """
     targets: list[PlaywrightPage | Frame] = [page]
     if selector is not None and ">>>" in selector:
-        targets.append(_resolve_frame(page, selector))
+        # Every matching frame needs its own injection — CSS does not cascade
+        # across frame boundaries, and a frame part legitimately matches
+        # several iframes (every ad slot on a page).
+        targets.extend(_resolve_frames(page, selector))
     for target in targets:
         target.add_style_tag(content=ANIM_DISABLE_CSS)
         target.add_style_tag(content=MASK_CSS)
         target.evaluate("document.fonts.ready")
 
+    # A piercing part (`a >> b`, alone or after a `>>>` frame hop) crosses into
+    # shadow roots, which the frame loop above cannot reach — a document (or
+    # frame) stylesheet never cascades into one. `_mask_locators` fans the
+    # selector out per frame, so the `>>>` case is covered here too.
     if selector is not None and ">>" in selector:
         _apply_shadow_determinism(page, selector)
 
@@ -219,35 +228,56 @@ def _apply_shadow_determinism(page: PlaywrightPage, selector: str) -> None:
     A document stylesheet never cascades into a shadow tree, so a masked
     element inside one (`my-widget >> form.order .date`) would carry the
     `peeksy-mask` class with no overlay rule to render it — the CODEMANIFEST's
-    own documented masking case, silently inert. Only `>>>`-free selectors
-    reach here (iframe selectors route through `_resolve_frame` instead).
+    own documented masking case, silently inert. `evaluate_all`, not
+    `evaluate`: a page with several instances of the same custom element has
+    the same shadow tree repeated, and only the first would get the styles.
+    The per-root `peeksy-determinism` guard keeps re-injection idempotent.
     """
     css = ANIM_DISABLE_CSS + MASK_CSS
-    locate(page, selector).first.evaluate(
-        "(el, css) => {"
-        "const root = el.getRootNode();"
-        "if (root instanceof ShadowRoot && !root.querySelector('style.peeksy-determinism')) {"
-        "const style = document.createElement('style');"
-        "style.className = 'peeksy-determinism';"
-        "style.textContent = css;"
-        "root.appendChild(style);"
-        "}"
-        "}",
-        css,
-    )
+    for locator in _mask_locators(page, selector):
+        locator.evaluate_all(
+            "(els, css) => els.forEach(el => {"
+            "const root = el.getRootNode();"
+            "if (root instanceof ShadowRoot && !root.querySelector('style.peeksy-determinism')) {"
+            "const style = document.createElement('style');"
+            "style.className = 'peeksy-determinism';"
+            "style.textContent = css;"
+            "root.appendChild(style);"
+            "}"
+            "})",
+            css,
+        )
 
 
-def _resolve_frame(page: PlaywrightPage, selector: str) -> Frame:
-    """The `Frame` a `frame >>> inner` selector addresses."""
+def _resolve_frames(page: PlaywrightPage, selector: str) -> list[Frame]:
+    """Every `Frame` a `frame >>> inner` selector addresses.
+
+    A frame part can legitimately match several iframes, so all of them are
+    returned — determinism CSS must reach each one. Non-frame matches of the
+    frame part are skipped rather than fatal: the mask/component locator
+    reports the real problem (matched no elements) once the caller gets there.
+    """
     frame_part = selector.partition(">>>")[0].strip()
-    handle = page.locator(frame_part).first.element_handle()
-    if handle is None:  # unreachable: the caller just resolved this locator
-        raise RuntimeError(f"frame selector matched nothing: {frame_part!r}")
-    frame = handle.content_frame()
-    handle.dispose()
-    if frame is None:
-        raise RuntimeError(f"selector {frame_part!r} does not address an <iframe>")
-    return frame
+    frames: list[Frame] = []
+    for handle in page.locator(frame_part).element_handles():
+        frame = handle.content_frame()
+        handle.dispose()
+        if frame is not None:
+            frames.append(frame)
+    return frames
+
+
+def _mask_locators(page: PlaywrightPage, selector: str) -> list[Locator]:
+    """One locator per frame a mask selector spans, or the single page locator.
+
+    `locate()` scopes an iframe selector to its FIRST matching frame (strict
+    mode demands an owner), but masking must reach the masked region in EVERY
+    matching frame — "every ad slot", the CODEMANIFEST's own motivating case.
+    """
+    if ">>>" not in selector:
+        return [locate(page, selector)]
+    inner = selector.partition(">>>")[2]
+    return [frame.locator(inner.strip()) for frame in _resolve_frames(page, selector)]
 
 
 def locate(page: PlaywrightPage, selector: str) -> Locator:
@@ -259,10 +289,16 @@ def locate(page: PlaywrightPage, selector: str) -> Locator:
     through `frame_locator`. The `>>>` separator is the iframe marker: keying
     on a literal `iframe` prefix would misroute plain CSS that targets the
     `<iframe>` element itself (`iframe.ad` has no inner selector to split).
+
+    `.first` on the FrameLocator is load-bearing: `frame_locator(...)` is
+    strict about its OWNER selector, so a frame part matching several iframes
+    (every ad slot, every embedded player) would raise a strict-mode violation
+    on the first `.wait_for`/`.screenshot`/`.evaluate`. `.first` scopes to the
+    first matching frame; `_apply_determinism` still injects into every frame.
     """
     if ">>>" in selector:
         frame_part, _, inner = selector.partition(">>>")
-        return page.frame_locator(frame_part.strip()).locator(inner.strip())
+        return page.frame_locator(frame_part.strip()).first.locator(inner.strip())
     return page.locator(selector)
 
 

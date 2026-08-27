@@ -628,3 +628,171 @@ def test_run_test_launch_failure_preserves_prior_results(monkeypatch, tmp_path: 
         run_test(suite, None, None)
 
     assert current.exists(), "a failed launch must not delete the previous run's images"
+
+
+# --------------------------------------------------------------------------
+# Review 4 — long-form wait/scroll_by values that `int()` would reject
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param({"kind": "wait", "value": "hidden"}, id="hidden-without-target"),
+        pytest.param({"kind": "wait", "target": "#m", "value": "purple"}, id="target-plus-junk"),
+        pytest.param({"kind": "wait", "value": "²²"}, id="unicode-digits"),
+        pytest.param({"kind": "wait", "value": "--5"}, id="double-sign"),
+        pytest.param({"kind": "scroll_by", "value": "--5"}, id="scroll-double-sign"),
+        pytest.param({"kind": "scroll_by", "value": "²²"}, id="scroll-unicode-digits"),
+        pytest.param({"kind": "scroll_by", "value": "+-5"}, id="scroll-mixed-sign"),
+    ],
+)
+def test_int_rejecting_scalars_fail_at_load(raw: dict) -> None:
+    """Regression: the guards tested `str.isdigit`/`lstrip("+-")`, which accept
+    Unicode digits and doubled signs that `int()` rejects — and the `wait` guard
+    exempted the target-present case entirely, so `value: hidden` with no
+    target validated and then crashed `int("hidden")` mid-capture."""
+    with pytest.raises(ValidationError, match="whole milliseconds|whole pixels|needs a target"):
+        Action.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param({"kind": "wait", "target": "#m", "value": "hidden"}, id="hidden-with-target"),
+        pytest.param({"kind": "wait", "target": "#m"}, id="selector-only"),
+        pytest.param({"kind": "wait", "value": "500"}, id="ms"),
+        pytest.param({"kind": "wait", "value": "-500"}, id="negative-ms"),
+        pytest.param({"kind": "scroll_by", "value": "-5"}, id="scroll-negative"),
+        pytest.param({"kind": "scroll_by", "value": "+5"}, id="scroll-plus"),
+        pytest.param({"kind": "scroll_by", "value": "10,-300"}, id="scroll-xy-signed"),
+    ],
+)
+def test_valid_signed_scalars_still_parse(raw: dict) -> None:
+    """Negative and `+`-prefixed pixel/millisecond counts are legitimate; the
+    real-`int()` oracle must accept exactly what capture's `int()` accepts."""
+    Action.model_validate(raw)
+
+
+# --------------------------------------------------------------------------
+# Review 4 — repeated shadow roots and repeated iframes
+# --------------------------------------------------------------------------
+
+# Two instances of the same custom element, each with its own shadow tree, and
+# two iframes whose frame part matches both — the shapes `.first`-only code
+# covers just one of.
+_MULTI_INSTANCE_HTML = """<!DOCTYPE html><html><body style="margin:0">
+<style>
+  my-widget { display: block; }
+  iframe.ad { width: 240px; height: 60px; border: 0; display: block; }
+</style>
+<my-widget id="w1"></my-widget>
+<my-widget id="w2"></my-widget>
+<iframe class="ad" srcdoc="<div id='in' style='width:100px; height:40px;'></div>"></iframe>
+<iframe class="ad" srcdoc="<div id='in' style='width:100px; height:40px;'></div>"></iframe>
+<script>
+  for (const id of ["w1", "w2"]) {
+    const root = document.getElementById(id).attachShadow({mode: "open"});
+    root.innerHTML = '<div id="w" style="width:300px; height:80px; background:#eeeeee;">'
+      + '<span class="date" style="display:inline-block; width:120px; height:30px;">today</span>'
+      + "</div>";
+  }
+</script>
+</body></html>"""
+
+
+def test_mask_reaches_every_shadow_root_of_a_repeated_widget(tmp_path: Path) -> None:
+    """Regression: determinism CSS was injected via `.first.evaluate`, so only
+    the first instance of a repeated custom element got the overlay rule — the
+    second widget's dynamic region kept flapping with the `peeksy-mask` class
+    applied and nothing rendering it."""
+    html = _write_page(tmp_path, _MULTI_INSTANCE_HTML)
+    session = CaptureSession()
+    session.open()
+    try:
+        session.open_page(Page(name="home", url=html.as_uri(), wait_until="load"), VP)
+        component = Component(
+            name="widgets",
+            selector="body",
+            mask_selectors=["my-widget >> .date"],
+            viewports=[VP],
+        )
+        out_path = str(tmp_path / "widgets.png")
+        session.capture_component(component, out_path)
+
+        with Image.open(out_path) as image:
+            image.load()
+            raw = image.convert("RGBA").tobytes()
+        needle = bytes(MASK_GRAY)
+        gray = sum(1 for i in range(0, len(raw), 4) if raw[i : i + 4] == needle)
+        # BOTH 120x30 date regions must be covered, not just the first.
+        assert gray >= 2 * 120 * 30, f"only one shadow root masked: {gray} gray pixels"
+    finally:
+        session.close()
+
+
+def test_animation_disable_css_reaches_every_shadow_root(tmp_path: Path) -> None:
+    """The animation-disable style must land in each repeated widget's root."""
+    html = _write_page(tmp_path, _MULTI_INSTANCE_HTML)
+    session = CaptureSession()
+    session.open()
+    try:
+        session.open_page(Page(name="home", url=html.as_uri(), wait_until="load"), VP)
+        session.capture_component(
+            Component(name="widgets", selector="my-widget >> #w", viewports=[VP]),
+            str(tmp_path / "widgets.png"),
+        )
+        per_root = session.page.evaluate(
+            "() => [...document.querySelectorAll('my-widget')].map("
+            "h => h.shadowRoot.querySelectorAll('style.peeksy-determinism').length)"
+        )
+        assert per_root == [1, 1], f"determinism style missing from some roots: {per_root}"
+    finally:
+        session.close()
+
+
+def test_mask_selector_matching_several_iframes_does_not_crash(tmp_path: Path) -> None:
+    """Regression: `frame_locator(...)` is strict about its OWNER selector, so a
+    frame part matching two iframes raised a strict-mode violation on the first
+    `.evaluate` — every such component was reported BROKEN instead of tested."""
+    html = _write_page(tmp_path, _MULTI_INSTANCE_HTML)
+    session = CaptureSession()
+    session.open()
+    try:
+        session.open_page(Page(name="home", url=html.as_uri(), wait_until="load"), VP)
+        component = Component(
+            name="frames",
+            selector="body",
+            mask_selectors=["iframe.ad >>> #in"],
+            viewports=[VP],
+        )
+        out_path = str(tmp_path / "frames.png")
+        session.capture_component(component, out_path)  # must not raise
+
+        with Image.open(out_path) as image:
+            image.load()
+            raw = image.convert("RGBA").tobytes()
+        needle = bytes(MASK_GRAY)
+        gray = sum(1 for i in range(0, len(raw), 4) if raw[i : i + 4] == needle)
+        # BOTH 100x40 in-frame regions must be covered by the overlay.
+        assert gray >= 2 * 100 * 40, f"only one frame masked: {gray} gray pixels"
+    finally:
+        session.close()
+
+
+def test_component_selector_matching_several_iframes_captures(tmp_path: Path) -> None:
+    """The component selector's own `.wait_for`/`.screenshot` hit the same
+    strict-mode violation — a multi-frame component could never be captured."""
+    html = _write_page(tmp_path, _MULTI_INSTANCE_HTML)
+    session = CaptureSession()
+    session.open()
+    try:
+        session.open_page(Page(name="home", url=html.as_uri(), wait_until="load"), VP)
+        out_path = str(tmp_path / "in_frame.png")
+        session.capture_component(
+            Component(name="in-frame", selector="iframe.ad >>> #in", viewports=[VP]),
+            out_path,
+        )
+        assert Image.open(out_path).size == (100, 40)
+    finally:
+        session.close()
