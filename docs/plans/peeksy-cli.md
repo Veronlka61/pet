@@ -474,16 +474,16 @@ Covers entity `Outcome` (`outcome.py`) and routine `write_results` (`writer.py`)
 
 **CRITICAL: `CODEMANIFEST` files — read-only contract definitions. Do NOT modify them. If implementation does not match the contract, fix the implementation — never fix the contract.**
 
-- [ ] **Contract tests** (`tests/test_reporting_writer.py`): `Outcome` and `write_results` importable
+- [x] **Contract tests** (`tests/test_reporting_writer.py`): `Outcome` and `write_results` importable
       from `peeksy.reporting`; `write_results(outcomes: list[Outcome], results_dir: str)` returns None;
       `Outcome` exposes all ten properties with declared types (expected to fail now)
-- [ ] **Code**: create `peeksy/reporting/outcome.py` — `Outcome` record (dataclass or Pydantic model,
+- [x] **Code**: create `peeksy/reporting/outcome.py` — `Outcome` record (dataclass or Pydantic model,
       all ten fields per the contract signature)
-- [ ] **Code**: create `peeksy/reporting/writer.py` — implement the 8-step trace; copy attachments as
+- [x] **Code**: create `peeksy/reporting/writer.py` — implement the 8-step trace; copy attachments as
       `<uuid>-attachment`; create `peeksy/reporting/__init__.py` facade with
       `__all__ = ["Outcome", "write_results"]`
-- [ ] **Interface verification**: `uv run pytest tests/test_reporting_writer.py -v` — contract tests pass
-- [ ] **Logic tests** (`tests/test_reporting_writer.py`, tmp_path + tiny PIL-generated PNGs):
+- [x] **Interface verification**: `uv run pytest tests/test_reporting_writer.py -v` — contract tests pass
+- [x] **Logic tests** (`tests/test_reporting_writer.py`, tmp_path + tiny PIL-generated PNGs):
       positive — PASSED outcome with baseline+current → one `*-result.json`, name
       `{suite} / {page} / {name} [{viewport}]`, `historyId`/`testCaseId` ==
       `peeksy::{suite}::{page}::{name}[{viewport}]`, suite label == outcome.suite, exactly two
@@ -493,11 +493,11 @@ Covers entity `Outcome` (`outcome.py`) and routine `write_results` (`writer.py`)
       `mismatch_percent` (None) NOT rendered; edge — fresh (absent) `results_dir` created;
       two viewports of the same component → two JSONs with DISTINCT `historyId`s
       (`…[1280x720]` vs `…[375x667]`)
-- [ ] **Debugging**: `uv run pytest tests/test_reporting_writer.py -v` — fix implementation until all
+- [x] **Debugging**: `uv run pytest tests/test_reporting_writer.py -v` — fix implementation until all
       pass (do NOT fix test code)
-- [ ] **Contract re-verification**: facade, signatures, and Allure conventions match
+- [x] **Contract re-verification**: facade, signatures, and Allure conventions match
       `peeksy/reporting/CODEMANIFEST`
-- [ ] **Lint**: `uv run ruff check peeksy/reporting tests/test_reporting_writer.py` + `uv run ruff format --check peeksy/reporting tests/test_reporting_writer.py`
+- [x] **Lint**: `uv run ruff check peeksy/reporting tests/test_reporting_writer.py` + `uv run ruff format --check peeksy/reporting tests/test_reporting_writer.py`
 
 ### Task 6: `peeksy/reporting` — `build_report` (TDD)
 
