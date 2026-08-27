@@ -517,12 +517,12 @@ overrides the example snippet in `.goga/usages/cooks/allure.md` which shows the 
 
 **CRITICAL: `CODEMANIFEST` files — read-only contract definitions. Do NOT modify them. If implementation does not match the contract, fix the implementation — never fix the contract.**
 
-- [ ] **Contract tests** (`tests/test_reporting_report.py`): `build_report` importable from
+- [x] **Contract tests** (`tests/test_reporting_report.py`): `build_report` importable from
       `peeksy.reporting`; signature `build_report(results_dir: str, report_dir: str)` (expected to fail now)
-- [ ] **Code**: create `peeksy/reporting/report.py` — implement the trace; add `build_report` to the
+- [x] **Code**: create `peeksy/reporting/report.py` — implement the trace; add `build_report` to the
       facade `__all__`
-- [ ] **Interface verification**: `uv run pytest tests/test_reporting_report.py -v` — contract tests pass
-- [ ] **Logic tests** (`tests/test_reporting_report.py`, everything stubbed — no JDK needed):
+- [x] **Interface verification**: `uv run pytest tests/test_reporting_report.py -v` — contract tests pass
+- [x] **Logic tests** (`tests/test_reporting_report.py`, everything stubbed — no JDK needed):
       `test_build_report_missing_allure_raises_human_readable` (`monkeypatch.setattr(shutil, "which", lambda _: None)`
       → `pytest.raises(RuntimeError)` with install hint; assert `subprocess.run` NOT called);
       `test_build_report_invokes_allure_with_canonical_args` (which → `"/usr/bin/allure"`;
@@ -530,10 +530,10 @@ overrides the example snippet in `.goga/usages/cooks/allure.md` which shows the 
       `args == ["allure", "generate", "/tmp/results", "--clean", "-o", "/tmp/report"]`, `check is True`,
       `capture_output is True`);
       edge — allure exits non-zero → spy raises/returns non-zero → `CalledProcessError` propagates
-- [ ] **Debugging**: `uv run pytest tests/test_reporting_report.py -v` — fix implementation until all
+- [x] **Debugging**: `uv run pytest tests/test_reporting_report.py -v` — fix implementation until all
       pass (do NOT fix test code)
-- [ ] **Contract re-verification**: facade and behavior match `peeksy/reporting/CODEMANIFEST`
-- [ ] **Lint**: `uv run ruff check peeksy/reporting tests/test_reporting_report.py` + `uv run ruff format --check peeksy/reporting tests/test_reporting_report.py`
+- [x] **Contract re-verification**: facade and behavior match `peeksy/reporting/CODEMANIFEST`
+- [x] **Lint**: `uv run ruff check peeksy/reporting tests/test_reporting_report.py` + `uv run ruff format --check peeksy/reporting tests/test_reporting_report.py`
 
 ### Task 7: `peeksy/capture` — `CaptureSession` with two-level setup (TDD)
 
