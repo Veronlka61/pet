@@ -655,17 +655,17 @@ it depends on `CaptureSession` only.
 
 **CRITICAL: `CODEMANIFEST` files — read-only contract definitions. Do NOT modify them. If implementation does not match the contract, fix the implementation — never fix the contract.**
 
-- [ ] **Contract tests** (`tests/test_runner.py`): `run_generate`, `run_test`, `run_report` importable
+- [x] **Contract tests** (`tests/test_runner.py`): `run_generate`, `run_test`, `run_report` importable
       from `peeksy.runner`; signatures match
       (`run_generate(suite: Suite, pages: list[str] | None, components: list[str] | None)` etc.;
       `run_test` returns `int`) (expected to fail now)
-- [ ] **Code**: create `peeksy/runner/runner.py` — implement the three routines exactly per the traces;
+- [x] **Code**: create `peeksy/runner/runner.py` — implement the three routines exactly per the traces;
       private helpers allowed in the same file (filtering, viewport dedupe, path builders
       `{baseline_path}/{page}/{name}_{WxH}.png`, `{results_path}/{page}/{name}_{WxH}.current.png`,
       `{results_path}/{page}/{name}_{WxH}.diff.png`, results clearing by exact patterns)
-- [ ] **Code**: create facade `peeksy/runner/__init__.py` with `__all__ = ["run_generate", "run_test", "run_report"]`
-- [ ] **Interface verification**: `uv run pytest tests/test_runner.py -v` — contract tests pass
-- [ ] **Logic tests** (`tests/test_runner.py` — use a FakeCaptureSession monkeypatched over
+- [x] **Code**: create facade `peeksy/runner/__init__.py` with `__all__ = ["run_generate", "run_test", "run_report"]`
+- [x] **Interface verification**: `uv run pytest tests/test_runner.py -v` — contract tests pass
+- [x] **Logic tests** (`tests/test_runner.py` — use a FakeCaptureSession monkeypatched over
       `peeksy.runner.runner.CaptureSession` whose `capture_component` writes a small PIL-generated PNG
       to `out_path`, `open_page` raises on demand; plus real `Suite` objects built directly — no browser
       needed at this level):
@@ -690,11 +690,11 @@ it depends on `CaptureSession` only.
       ordered viewport dedupe preserves first-seen order over name-sorted components (spy on
       `open_page` call order); exit code 0 when all PASSED;
       `run_report` delegates (spy on `build_report` — called with `suite.results_path`, `suite.report_path`)
-- [ ] **Debugging**: `uv run pytest tests/test_runner.py -v` — fix implementation until all pass
+- [x] **Debugging**: `uv run pytest tests/test_runner.py -v` — fix implementation until all pass
       (do NOT fix test code)
-- [ ] **Contract re-verification**: facade, signatures, and orchestration semantics match
+- [x] **Contract re-verification**: facade, signatures, and orchestration semantics match
       `peeksy/runner/CODEMANIFEST`; no Playwright import in `peeksy/runner/`
-- [ ] **Lint**: `uv run ruff check peeksy/runner tests/test_runner.py` + `uv run ruff format --check peeksy/runner tests/test_runner.py`
+- [x] **Lint**: `uv run ruff check peeksy/runner tests/test_runner.py` + `uv run ruff format --check peeksy/runner tests/test_runner.py`
 
 ### Task 9: `peeksy/cli` — Typer facade `generate`/`test`/`report`/`main` (TDD)
 
