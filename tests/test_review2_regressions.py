@@ -396,3 +396,235 @@ def test_broken_capture_error_keeps_existing_baseline(tmp_path: Path) -> None:
     names = [attachment["name"] for attachment in payload["attachments"]]
     assert names == ["baseline"], names
     assert (tmp_path / "results" / payload["attachments"][0]["source"]).exists()
+
+
+# --------------------------------------------------------------------------
+# Review 3 — long-form Action arity, typo'd siblings, string pixel values
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param({"kind": "click"}, id="click-no-target"),
+        pytest.param({"kind": "hover"}, id="hover-no-target"),
+        pytest.param({"kind": "scroll_to"}, id="scroll-to-no-target"),
+        pytest.param({"kind": "fill", "target": "#q"}, id="fill-no-value"),
+        pytest.param({"kind": "select", "target": "#c"}, id="select-no-value"),
+        pytest.param({"kind": "press"}, id="press-no-value"),
+        pytest.param({"kind": "open"}, id="open-no-value"),
+        pytest.param({"kind": "scroll_by"}, id="scroll-by-no-value"),
+        pytest.param({"kind": "reload", "target": "#x"}, id="reload-with-target"),
+        pytest.param({"kind": "reload", "value": "x"}, id="reload-with-value"),
+        pytest.param(
+            {"kind": "open", "target": "#x", "value": "https://x/"}, id="open-with-target"
+        ),
+    ],
+)
+def test_long_form_action_missing_fields_are_rejected(raw: dict) -> None:
+    """Regression: the long form skipped `_argument_for` entirely, so a missing
+    `target`/`value` surfaced as a Playwright `locator(None)` / `fill(None)`
+    TypeError mid-run instead of a load-time config error."""
+    with pytest.raises(ValidationError, match="is required for|takes no "):
+        Action.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param({"kind": "click", "target": "#x"}, id="click"),
+        pytest.param({"kind": "fill", "target": "#q", "value": "shoes"}, id="fill"),
+        pytest.param({"kind": "press", "value": "Enter"}, id="press-keyboard"),
+        pytest.param({"kind": "press", "target": "#q", "value": "Enter"}, id="press-element"),
+        pytest.param({"kind": "open", "value": "https://x/"}, id="open"),
+        pytest.param({"kind": "reload"}, id="reload"),
+        pytest.param({"kind": "wait"}, id="wait-default"),
+        pytest.param({"kind": "wait", "target": "#m"}, id="wait-selector"),
+        pytest.param({"kind": "wait", "target": "#m", "value": "hidden"}, id="wait-hidden"),
+        pytest.param({"kind": "wait", "value": "500"}, id="wait-ms"),
+    ],
+)
+def test_long_form_action_valid_shapes_still_parse(raw: dict) -> None:
+    """The arity check must not reject any shape the CODEMANIFEST allows."""
+    Action.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param({"click": "#x", "taget": "#y"}, id="typo-sibling"),
+        pytest.param({"wait": {"selector": "#m", "hidde": True}}, id="typo-in-wait-dict"),
+        pytest.param({"wait": {"selector": "#m", "hidden": "true"}}, id="hidden-as-string"),
+    ],
+)
+def test_short_form_stray_keys_are_rejected(raw: dict) -> None:
+    """Regression: `_argument_for` rebuilt the dict from recognized keys only, so
+    a typo'd sibling never reached `extra="forbid"` and was silently dropped —
+    `hidden: "true"` even flipped the wait to VISIBLE."""
+    with pytest.raises(ValidationError):
+        Action.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param({"scroll_by": "300.5"}, id="fractional-string"),
+        pytest.param({"scroll_by": "abc"}, id="non-numeric-string"),
+        pytest.param({"kind": "scroll_by", "value": "300.5"}, id="long-form-fractional"),
+        pytest.param({"kind": "wait", "value": "500.5"}, id="wait-fractional-ms"),
+        pytest.param({"kind": "wait", "value": "abc"}, id="wait-non-numeric-ms"),
+    ],
+)
+def test_string_pixel_and_ms_values_are_validated(raw: dict) -> None:
+    """Regression: quoted YAML scalars bypassed `_pixels` and crashed `int()` at
+    capture time (a BROKEN outcome) instead of failing at load."""
+    with pytest.raises(ValidationError, match="whole pixels|whole milliseconds"):
+        Action.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param({"scroll_by": "300"}, id="string-pixels"),
+        pytest.param({"scroll_by": "10,300"}, id="string-xy"),
+        pytest.param({"kind": "scroll_by", "value": "300"}, id="long-form-pixels"),
+    ],
+)
+def test_valid_string_pixel_values_still_parse(raw: dict) -> None:
+    Action.model_validate(raw)
+
+
+# --------------------------------------------------------------------------
+# Review 3 — shadow-DOM masking and iframe-addressable setup actions
+# --------------------------------------------------------------------------
+
+
+def test_mask_inside_shadow_dom_applies_overlay(tmp_path: Path) -> None:
+    """Regression: the overlay CSS was injected into the main document only, and
+    a document stylesheet never cascades into a shadow tree — so the
+    CODEMANIFEST's own documented case (`my-widget >> form.order .date`) added
+    a class no rule could render, and the dynamic region kept flapping."""
+    body = """<!DOCTYPE html><html><body style="margin:0">
+<my-widget></my-widget>
+<script>
+  const shadow = document.querySelector("my-widget").attachShadow({mode: "open"});
+  shadow.innerHTML = '<div id="w" style="display:inline-block; width:300px; height:80px; background:#eeeeee;"><span class="date" style="display:inline-block; width:120px; height:30px;">today</span></div>';
+</script>
+</body></html>"""
+    html = _write_page(tmp_path, body)
+    session = CaptureSession()
+    session.open()
+    try:
+        session.open_page(Page(name="home", url=html.as_uri(), wait_until="load"), VP)
+        component = Component(
+            name="widget",
+            selector="my-widget >> #w",
+            mask_selectors=["my-widget >> .date"],
+            viewports=[VP],
+        )
+        out_path = str(tmp_path / "widget.png")
+        session.capture_component(component, out_path)
+
+        with Image.open(out_path) as image:
+            image.load()
+            raw = image.convert("RGBA").tobytes()
+        needle = bytes(MASK_GRAY)
+        gray = sum(1 for i in range(0, len(raw), 4) if raw[i : i + 4] == needle)
+        # The 120x30 date region must be covered by the opaque overlay.
+        assert gray >= 120 * 30, f"mask overlay missing inside shadow DOM: {gray} gray pixels"
+    finally:
+        session.close()
+
+
+def test_animation_disable_css_reaches_shadow_dom(tmp_path: Path) -> None:
+    """The animation-disable style must be present inside the shadow tree."""
+    body = """<!DOCTYPE html><html><body style="margin:0">
+<my-widget></my-widget>
+<script>
+  const shadow = document.querySelector("my-widget").attachShadow({mode: "open"});
+  shadow.innerHTML = '<div id="w" style="width:300px; height:80px;">x</div>';
+</script>
+</body></html>"""
+    html = _write_page(tmp_path, body)
+    session = CaptureSession()
+    session.open()
+    try:
+        session.open_page(Page(name="home", url=html.as_uri(), wait_until="load"), VP)
+        session.capture_component(
+            Component(name="widget", selector="my-widget >> #w", viewports=[VP]),
+            str(tmp_path / "widget.png"),
+        )
+        widget = session.page.locator("my-widget")
+        animation = widget.locator("#w").evaluate("el => getComputedStyle(el).animationName")
+        assert animation == "none"
+    finally:
+        session.close()
+
+
+def test_setup_actions_can_target_iframe_content(tmp_path: Path) -> None:
+    """Regression: `run_actions` used `page.locator(target)` directly instead of
+    the cell's own `locate` helper, so no action could address content inside an
+    `<iframe>` — each one burned the full 30 s timeout and reported BROKEN."""
+    body = """<!DOCTYPE html><html><body style="margin:0">
+<iframe id="frame" style="width:300px; height:80px; border:0;"
+  srcdoc='<button id="btn" style="width:100px; height:30px;">go</button>'>
+</iframe>
+</body></html>"""
+    html = _write_page(tmp_path, body)
+    session = CaptureSession()
+    session.open()
+    try:
+        # A click AND a wait inside the frame must both resolve, not time out.
+        session.open_page(
+            Page(
+                name="home",
+                url=html.as_uri(),
+                wait_until="load",
+                setup=[
+                    Action(kind="click", target="iframe#frame >>> #btn"),
+                    Action(kind="wait", target="iframe#frame >>> #btn"),
+                ],
+            ),
+            VP,
+        )
+    finally:
+        session.close()
+
+
+# --------------------------------------------------------------------------
+# Review 3 — a failed launch must not destroy the previous run's evidence
+# --------------------------------------------------------------------------
+
+
+def test_run_test_launch_failure_preserves_prior_results(monkeypatch, tmp_path: Path) -> None:
+    """Regression: `_reset_page_results` wiped the page's `*.current.png` /
+    `*.diff.png` BEFORE `CaptureSession.open()` — an unlaunchable browser (the
+    normal state before `playwright install chromium`) left the previous run's
+    `*-result.json` files pointing at attachments that no longer existed."""
+    from peeksy.runner import run_test
+    from tests.test_runner import (
+        FakeCaptureSession,
+        install_fake,
+        make_component,
+        make_page,
+        make_suite,
+    )
+
+    suite = make_suite(tmp_path, pages=[make_page("home", [make_component("header")])])
+
+    class NoBrowser(FakeCaptureSession):
+        def open(self) -> None:
+            raise RuntimeError("Executable doesn't exist — run `playwright install chromium`")
+
+    install_fake(monkeypatch, lambda: NoBrowser())
+
+    # Prior-run evidence: a current PNG and its result JSON.
+    page_results = Path(suite.results_path) / "home"
+    page_results.mkdir(parents=True, exist_ok=True)
+    current = page_results / "header_1280x720.current.png"
+    Image.new("RGB", (8, 8), (200, 200, 200)).save(current)
+
+    with pytest.raises(RuntimeError, match="playwright install"):
+        run_test(suite, None, None)
+
+    assert current.exists(), "a failed launch must not delete the previous run's images"

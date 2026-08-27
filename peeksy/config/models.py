@@ -34,6 +34,27 @@ _VALUE_FROM_STRING = frozenset({"press", "scroll_by", "open"})
 # Kinds accepting the two-element `[target, value]` list form.
 _TARGET_VALUE_FROM_LIST = frozenset({"fill", "select", "press"})
 
+# Per-kind arity of the CONSTRUCTED fields (CODEMANIFEST "Requirements"),
+# applied whatever form the action was written in. `press` keeps `target`
+# optional (a keyboard-level press targets no element); `wait` legitimately
+# carries target-only, value-only, or neither.
+_REQUIRED_BY_KIND: dict[str, frozenset[str]] = {
+    "click": frozenset({"target"}),
+    "hover": frozenset({"target"}),
+    "scroll_to": frozenset({"target"}),
+    "scroll_by": frozenset({"value"}),
+    "fill": frozenset({"target", "value"}),
+    "press": frozenset({"value"}),
+    "select": frozenset({"target", "value"}),
+    "wait": frozenset(),
+    "open": frozenset({"value"}),
+    "reload": frozenset(),
+}
+# Fields a kind must NOT carry, even though the model types allow them.
+_FORBIDDEN_BY_KIND: dict[str, frozenset[str]] = {kind: frozenset() for kind in get_args(ActionKind)}
+_FORBIDDEN_BY_KIND["reload"] = frozenset({"target", "value"})
+_FORBIDDEN_BY_KIND["open"] = frozenset({"target"})
+
 
 class Viewport(BaseModel):
     """A single viewport dimension in CSS pixels."""
@@ -74,7 +95,53 @@ class Action(BaseModel):
             kinds = sorted(k for k, _ in items)
             raise ValueError(f"one action per list item, got several kinds: {kinds}")
         kind, arg = items[0]
+        # Siblings the parser does not recognize would be silently DROPPED by
+        # the fresh dict below (`taget:` never reaches `extra="forbid"`) — a
+        # typo'd key must fail as a config error, not disable the feature.
+        strays = sorted(set(data) - {kind})
+        if strays:
+            raise ValueError(
+                f"unknown key(s) {strays} alongside {kind!r} — expected one action per list item"
+            )
         return _argument_for(kind, arg)
+
+    @model_validator(mode="after")
+    def _validate_kind_fields(self) -> "Action":
+        """Enforce the per-kind `target`/`value` rules on the CONSTRUCTED fields.
+
+        The short form is checked shape-first in `_argument_for`, but the long
+        form (`{kind: fill, target: "#q"}`) skips that path entirely — without
+        this pass a missing `value` would surface as a Playwright `fill(None)`
+        TypeError mid-run instead of a load-time config error.
+        """
+        problems: list[str] = []
+        for label, forbidden in (("target", self.target), ("value", self.value)):
+            if forbidden is None:
+                if label in _REQUIRED_BY_KIND[self.kind]:
+                    problems.append(f"{label} is required for {self.kind!r}")
+            elif label in _FORBIDDEN_BY_KIND[self.kind]:
+                problems.append(f"{self.kind!r} takes no {label}, got {forbidden!r}")
+        if self.kind == "scroll_by" and self.value is not None:
+            problems.extend(_scroll_by_problems(self.value))
+        if (
+            self.kind == "wait"
+            and self.target is None
+            and self.value not in (None, "hidden")
+            and not self.value.isdigit()
+        ):
+            problems.append(f"wait takes whole milliseconds, got {self.value!r}")
+        if problems:
+            raise ValueError("; ".join(problems))
+        return self
+
+
+def _scroll_by_problems(value: str) -> list[str]:
+    """The capture cell splits `scroll_by` on `,` and `int()`s each part — a
+    fractional or non-numeric part must fail HERE as a config error."""
+    parts = value.split(",")
+    if len(parts) not in (1, 2) or not all(part.strip().lstrip("+-").isdigit() for part in parts):
+        return [f"scroll_by takes whole pixels or [x, y], got {value!r}"]
+    return []
 
 
 def _pixels(value: object) -> int:
@@ -111,6 +178,9 @@ def _argument_for(kind: str, arg: object) -> dict[str, object]:
         # The documented form is an unquoted YAML number: `- scroll_by: 300`.
         return {"kind": "scroll_by", "target": None, "value": str(_pixels(arg))}
 
+    if kind == "scroll_by" and isinstance(arg, str):
+        return {"kind": "scroll_by", "target": None, "value": _pixels_string(arg)}
+
     if isinstance(arg, str):
         if kind in _TARGET_FROM_STRING:
             return {"kind": kind, "target": arg, "value": None}
@@ -133,6 +203,31 @@ def _argument_for(kind: str, arg: object) -> dict[str, object]:
     raise ValueError(f"action {kind!r} needs an argument, got {arg!r}")
 
 
+def _pixels_string(value: str) -> str:
+    """A quoted YAML pixel count — same rule as `_pixels`, for the string form.
+
+    `_pixels` guards the numeric branch, but `- scroll_by: "300.5"` reaches this
+    one and must fail HERE, not as a capture-time `int()` crash. The `[x, y]`
+    form is also writable as `"10,300"` (`_parse_xy` splits on the comma).
+    """
+    if "," not in value:
+        return str(_pixels(_int_or_fail(value, "scroll_by")))
+    parts = value.split(",")
+    if len(parts) != 2:
+        raise ValueError(f"scroll_by takes pixels or [x, y], got {value!r}")
+    x, y = (_int_or_fail(part, "scroll_by") for part in parts)
+    return f"{_pixels(x)},{_pixels(y)}"
+
+
+def _int_or_fail(value: str, kind: str) -> int:
+    """Parse a whole-pixel integer, reporting a config error on failure."""
+    stripped = value.strip()
+    try:
+        return int(stripped)
+    except ValueError:
+        raise ValueError(f"{kind} takes whole pixels, got {value!r}") from None
+
+
 def _wait_argument(arg: object) -> dict[str, object]:
     """`wait` is overloaded: selector / {selector, hidden} / milliseconds / nothing."""
     if arg is None or arg == {}:
@@ -140,10 +235,20 @@ def _wait_argument(arg: object) -> dict[str, object]:
     if isinstance(arg, str):
         return {"kind": "wait", "target": arg, "value": None}
     if isinstance(arg, dict):
+        # Reject unknown keys: `hidde: true` / `hidden: "true"` would otherwise
+        # silently mean "wait for VISIBLE" — the opposite of the intent.
+        unknown = sorted(set(arg) - {"selector", "hidden"})
+        if unknown:
+            raise ValueError(f"wait takes 'selector' and 'hidden' only, got {unknown} in {arg!r}")
         selector = arg.get("selector")
         if not isinstance(selector, str) or not selector:
             raise ValueError(f"wait needs a 'selector' string, got {arg!r}")
-        if arg.get("hidden") is True:
+        hidden = arg.get("hidden")
+        if not isinstance(hidden, bool):
+            raise ValueError(  # noqa: TRY004 — config error, not a programming error
+                f"wait 'hidden' must be a boolean, got {hidden!r} in {arg!r}"
+            )
+        if hidden:
             return {"kind": "wait", "target": selector, "value": "hidden"}
         return {"kind": "wait", "target": selector, "value": None}
     if isinstance(arg, int) and not isinstance(arg, bool):

@@ -158,10 +158,10 @@ class CaptureSession:
                 mask_locator = locate(target, mask_selector)
                 if mask_locator.count() == 0:
                     raise ValueError(f"mask selector {mask_selector!r} matched no elements")
-                # The frame holding the masked element needs the overlay style
-                # too (CSS never crosses an iframe boundary).
-                if ">>>" in mask_selector:
-                    _apply_determinism(target, mask_selector)
+                # The frame or shadow root holding the masked element needs the
+                # overlay style too — CSS never crosses an iframe boundary, and
+                # a document stylesheet never cascades into a shadow tree.
+                _apply_determinism(target, mask_selector)
                 # evaluate_all, not evaluate: a mask selector legitimately
                 # matches several elements (every timestamp, every ad slot),
                 # and strict-mode evaluate would abort the capture on the 2nd.
@@ -209,6 +209,33 @@ def _apply_determinism(page: PlaywrightPage, selector: str | None = None) -> Non
         target.add_style_tag(content=MASK_CSS)
         target.evaluate("document.fonts.ready")
 
+    if selector is not None and ">>" in selector:
+        _apply_shadow_determinism(page, selector)
+
+
+def _apply_shadow_determinism(page: PlaywrightPage, selector: str) -> None:
+    """Inject the styles into the shadow roots a piercing selector crosses.
+
+    A document stylesheet never cascades into a shadow tree, so a masked
+    element inside one (`my-widget >> form.order .date`) would carry the
+    `peeksy-mask` class with no overlay rule to render it — the CODEMANIFEST's
+    own documented masking case, silently inert. Only `>>>`-free selectors
+    reach here (iframe selectors route through `_resolve_frame` instead).
+    """
+    css = ANIM_DISABLE_CSS + MASK_CSS
+    locate(page, selector).first.evaluate(
+        "(el, css) => {"
+        "const root = el.getRootNode();"
+        "if (root instanceof ShadowRoot && !root.querySelector('style.peeksy-determinism')) {"
+        "const style = document.createElement('style');"
+        "style.className = 'peeksy-determinism';"
+        "style.textContent = css;"
+        "root.appendChild(style);"
+        "}"
+        "}",
+        css,
+    )
+
 
 def _resolve_frame(page: PlaywrightPage, selector: str) -> Frame:
     """The `Frame` a `frame >>> inner` selector addresses."""
@@ -245,20 +272,20 @@ def run_actions(page: PlaywrightPage, actions: list[Action], wait_strategy: str)
         kind = action.kind
 
         if kind == "click":
-            page.locator(action.target).click()
+            locate(page, action.target).click()
         elif kind == "hover":
-            page.locator(action.target).hover()
+            locate(page, action.target).hover()
         elif kind == "scroll_to":
-            page.locator(action.target).scroll_into_view_if_needed()
+            locate(page, action.target).scroll_into_view_if_needed()
         elif kind == "scroll_by":
             x, y = _parse_xy(action.value)
             page.mouse.wheel(x, y)
         elif kind == "fill":
-            page.locator(action.target).fill(action.value)
+            locate(page, action.target).fill(action.value)
         elif kind == "press":
-            (page.locator(action.target) if action.target else page.keyboard).press(action.value)
+            (locate(page, action.target) if action.target else page.keyboard).press(action.value)
         elif kind == "select":
-            page.locator(action.target).select_option(action.value)
+            locate(page, action.target).select_option(action.value)
         elif kind == "wait":
             run_wait(page, action, wait_strategy)
         elif kind == "open":
@@ -273,7 +300,14 @@ def run_wait(page: PlaywrightPage, action: Action, wait_strategy: str) -> None:
     """`wait` is overloaded: selector / {selector, hidden} / ms / settle."""
     if action.target is not None:
         state = "hidden" if action.value == "hidden" else "visible"
-        page.wait_for_selector(action.target, state=state)
+        # `locate`, not `page.wait_for_selector`: a target inside an <iframe>
+        # (`frame >>> inner`) must resolve through frame_locator — the raw form
+        # would burn the whole 30 s timeout matching nothing.
+        target = locate(page, action.target).first
+        if state == "hidden":
+            target.wait_for(state="hidden")
+        else:
+            target.wait_for(state="visible")
         return
 
     if action.value is not None:

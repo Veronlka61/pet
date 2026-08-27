@@ -58,15 +58,17 @@ def run_test(
     if not selected:
         return 0  # nothing selected: no browser, and prior results stay untouched
 
-    # Stale `.current.png`/`.diff.png` of renamed/removed components would
-    # accumulate forever — the exact-pattern clear below never matches them.
-    for page, _ in selected:
-        _reset_page_results(suite, page)
-
     outcomes: list[Outcome] = []
     session = CaptureSession()
     try:
         session.open()
+        # Stale `.current.png`/`.diff.png` of renamed/removed components would
+        # accumulate forever — the exact-pattern clear below never matches them.
+        # Only after a successful launch: wiping the previous run's images while
+        # its `*-result.json` files still reference them would leave the report
+        # pointing at deleted attachments.
+        for page, _ in selected:
+            _reset_page_results(suite, page)
         for page, page_components in selected:
             for viewport, at_viewport in _group_by_viewport(page_components):
                 outcomes.extend(_run_viewport(suite, session, page, viewport, at_viewport))
