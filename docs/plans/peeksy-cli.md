@@ -723,13 +723,13 @@ try/except in each command. The missing-allure error from `report` is the `Runti
 
 **CRITICAL: `CODEMANIFEST` files — read-only contract definitions. Do NOT modify them. If implementation does not match the contract, fix the implementation — never fix the contract.**
 
-- [ ] **Contract tests** (`tests/test_cli.py`): `generate`, `test`, `report`, `main` importable from
+- [x] **Contract tests** (`tests/test_cli.py`): `generate`, `test`, `report`, `main` importable from
       `peeksy.cli`; a module-level Typer `app` exists; `main()` callable (expected to fail now)
-- [ ] **Code**: create `peeksy/cli/app.py` — Typer app + three commands + `main()` per the trace;
+- [x] **Code**: create `peeksy/cli/app.py` — Typer app + three commands + `main()` per the trace;
       shared config-error handler; create facade `peeksy/cli/__init__.py` with
       `__all__ = ["app", "generate", "test", "report", "main"]`
-- [ ] **Interface verification**: `uv run pytest tests/test_cli.py -v` + `uv run python -m peeksy.cli.app --help`-style smoke via CliRunner (expected: three commands listed)
-- [ ] **Logic tests** (`tests/test_cli.py`, `typer.testing.CliRunner`; stub `run_*` via monkeypatch on
+- [x] **Interface verification**: `uv run pytest tests/test_cli.py -v` + `uv run python -m peeksy.cli.app --help`-style smoke via CliRunner (expected: three commands listed)
+- [x] **Logic tests** (`tests/test_cli.py`, `typer.testing.CliRunner`; stub `run_*` via monkeypatch on
       `peeksy.cli.app.run_generate`/`run_test`/`run_report` and `load_config` where a Suite is needed —
       no browser): `--page`/`--component` repeatable options forwarded to the runner (spy);
       `--config` default is `./peeksy.yml` (spy on `load_config` with no `-c` passed);
@@ -741,11 +741,11 @@ try/except in each command. The missing-allure error from `report` is the `Runti
       `test_cli_report_prints_install_hint_when_allure_absent` (`run_report` stub raises the
       RuntimeError from Task 6 → exit 1, stdout mentions "allure", no traceback);
       `generate` delegates and exits 0
-- [ ] **Debugging**: `uv run pytest tests/test_cli.py -v` — fix implementation until all pass
+- [x] **Debugging**: `uv run pytest tests/test_cli.py -v` — fix implementation until all pass
       (do NOT fix test code)
-- [ ] **Contract re-verification**: facade, command surface, flags, and exit-code policy match
+- [x] **Contract re-verification**: facade, command surface, flags, and exit-code policy match
       `peeksy/cli/CODEMANIFEST`; console script works: `uv run peeksy --help` lists generate/test/report
-- [ ] **Lint**: `uv run ruff check peeksy/cli tests/test_cli.py` + `uv run ruff format --check peeksy/cli tests/test_cli.py`
+- [x] **Lint**: `uv run ruff check peeksy/cli tests/test_cli.py` + `uv run ruff format --check peeksy/cli tests/test_cli.py`
 
 ### Task 10: Integration tests — end-to-end generate → test → report (real browser)
 
