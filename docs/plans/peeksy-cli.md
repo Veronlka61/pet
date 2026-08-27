@@ -313,36 +313,36 @@ the invariant holds for direct construction too).
 
 **CRITICAL: `CODEMANIFEST` files — read-only contract definitions. Do NOT modify them. If implementation does not match the contract, fix the implementation — never fix the contract.**
 
-- [ ] **Contract tests** (`tests/test_config_models.py`): all five classes importable from `peeksy.config`
+- [x] **Contract tests** (`tests/test_config_models.py`): all five classes importable from `peeksy.config`
       facade; constructor signatures match the entity signatures (`Viewport(width, height)`,
       `Action(kind, target, value)`, `Component(name, selector, mask_selectors, viewports, threshold, tolerance, setup)`,
       `Page(name, url, wait_until, setup, components)`,
       `Suite(name, pages, baseline_path, results_path, report_path, threshold, tolerance)`);
       properties readable with declared types (expected to fail now)
-- [ ] **Code**: create `peeksy/config/models.py` — five Pydantic v2 `BaseModel` classes with type hints
+- [x] **Code**: create `peeksy/config/models.py` — five Pydantic v2 `BaseModel` classes with type hints
       per the contract signatures; defaults where the manifest implies them (`wait_until="networkidle"`,
       empty-list defaults for `setup`/`mask_selectors` are acceptable; `viewports` must remain required
       and non-empty)
-- [ ] **Code**: implement validators — `kind` Literal; threshold `gt=0, lt=1` and tolerance `gt=0, le=100`
+- [x] **Code**: implement validators — `kind` Literal; threshold `gt=0, lt=1` and tolerance `gt=0, le=100`
       on both `Suite` and `Component`; `Viewport.width/height` positive ints (`gt=0`);
       `Component.viewports` non-empty (`min_length=1`); `Page`: duplicate `Component.name` rejected,
       `wait_until` Literal, url⇄leading-open mutual exclusivity both directions; `Page.components`
       name-sorted on validation
-- [ ] **Code**: create cell facade `peeksy/config/__init__.py` — import and re-export `Viewport`,
+- [x] **Code**: create cell facade `peeksy/config/__init__.py` — import and re-export `Viewport`,
       `Action`, `Component`, `Page`, `Suite` via `__all__`
-- [ ] **Interface verification**: `uv run pytest tests/test_config_models.py -v` — all contract tests pass
-- [ ] **Logic tests** (`tests/test_config_models.py`): positive — valid `Viewport`/`Action`/`Component`/`Page`/`Suite`
+- [x] **Interface verification**: `uv run pytest tests/test_config_models.py -v` — all contract tests pass
+- [x] **Logic tests** (`tests/test_config_models.py`): positive — valid `Viewport`/`Action`/`Component`/`Page`/`Suite`
       construct and expose fields; negative (parametrized `pytest.raises(ValidationError)`) — `kind="explode"`,
       `threshold=5` / `threshold=0` / `threshold=1`, `tolerance=150` / `tolerance=0`, `width=0`,
       `viewports=[]`, duplicate component names in one `Page`, `wait_until="eager"`,
       `url=None` + setup not starting with `open`, `url` set + setup starting with `open`;
       edge — same component name on TWO different pages is ACCEPTED; components come out name-sorted
       regardless of input order
-- [ ] **Debugging**: `uv run pytest tests/test_config_models.py -v` — fix implementation code until all
+- [x] **Debugging**: `uv run pytest tests/test_config_models.py -v` — fix implementation code until all
       tests pass (do NOT fix test code)
-- [ ] **Contract re-verification**: verify facade `__all__`, signatures, and property types against
+- [x] **Contract re-verification**: verify facade `__all__`, signatures, and property types against
       `peeksy/config/CODEMANIFEST`
-- [ ] **Lint**: `uv run ruff check peeksy/config tests/test_config_models.py` + `uv run ruff format --check peeksy/config tests/test_config_models.py` — fix formatting, apply decomposition if necessary
+- [x] **Lint**: `uv run ruff check peeksy/config tests/test_config_models.py` + `uv run ruff format --check peeksy/config tests/test_config_models.py` — fix formatting, apply decomposition if necessary
 
 ### Task 3: `peeksy/config` — `load_config` site-folder loader (TDD)
 
