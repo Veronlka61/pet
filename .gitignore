@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# Tooling state
+.ralphex/
+
+# Build artifacts
+dist/
+build/
+
+# Playwright
+# (browsers live in ~/.cache/ms-playwright)
+test-results/

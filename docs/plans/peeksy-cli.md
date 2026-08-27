@@ -260,22 +260,22 @@ from the design document's pinning policy. The root package `peeksy` becomes imp
 
 **CRITICAL: `CODEMANIFEST` files — read-only contract definitions. Do NOT modify them. If implementation does not match the contract, fix the implementation — never fix the contract.**
 
-- [ ] Create `pyproject.toml` (uv-managed): `[project]` name `peeksy`, `requires-python = ">=3.10"`;
+- [x] Create `pyproject.toml` (uv-managed): `[project]` name `peeksy`, `requires-python = ">=3.10"`;
       runtime deps: `pydantic` (v2), `pyyaml`, `pixelmatch==0.4.0` (EXACT), `pillow`,
       `playwright` (EXACT `==` pin of the current version — never `>=`), `allure-python-commons`, `typer`;
       dev deps (`[dependency-groups]`): `pytest`, `ruff`
-- [ ] Add `[project.scripts]`: `peeksy = "peeksy.cli.app:main"` (resolves once Task 9 lands)
-- [ ] Add `[tool.pytest.ini_options]`: `testpaths = ["tests"]`; add `[tool.ruff]`:
+- [x] Add `[project.scripts]`: `peeksy = "peeksy.cli.app:main"` (resolves once Task 9 lands)
+- [x] Add `[tool.pytest.ini_options]`: `testpaths = ["tests"]`; add `[tool.ruff]`:
       `target-version = "py310"`, `line-length = 100`
-- [ ] Create root package facade `peeksy/__init__.py` — docstring only, `__all__: list[str] = []`
-- [ ] Create empty `tests/` directory (no test files yet)
-- [ ] Run `uv sync` — resolves and installs all deps, creates `uv.lock`
-- [ ] Run `uv run python -c "from pixelmatch.contrib.PIL import pixelmatch"` — verifies the
+- [x] Create root package facade `peeksy/__init__.py` — docstring only, `__all__: list[str] = []`
+- [x] Create empty `tests/` directory (no test files yet)
+- [x] Run `uv sync` — resolves and installs all deps, creates `uv.lock`
+- [x] Run `uv run python -c "from pixelmatch.contrib.PIL import pixelmatch"` — verifies the
       PIL-aware pixelmatch entry point; if it fails, fix the import source (do NOT proceed on a broken import)
-- [ ] Run `uv run playwright install chromium` — downloads the browser once for capture tests
-- [ ] Verify root package importable: `uv run python -c "import peeksy"` — exits 0
-- [ ] Verify test runner green (collects nothing): `uv run pytest` — exit 0
-- [ ] Lint: `uv run ruff check .` — fix formatting if necessary
+- [x] Run `uv run playwright install chromium` — downloads the browser once for capture tests
+- [x] Verify root package importable: `uv run python -c "import peeksy"` — exits 0
+- [x] Verify test runner green (collects nothing): `uv run pytest` — exit 0
+- [x] Lint: `uv run ruff check .` — fix formatting if necessary
 
 ### Task 2: `peeksy/config` — Pydantic models `Viewport`/`Action`/`Component`/`Page`/`Suite` (TDD)
 
