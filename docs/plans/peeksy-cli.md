@@ -425,17 +425,17 @@ the cook, is authoritative.
 
 **CRITICAL: `CODEMANIFEST` files — read-only contract definitions. Do NOT modify them. If implementation does not match the contract, fix the implementation — never fix the contract.**
 
-- [ ] **Contract tests** (`tests/test_compare.py`): `compare` and `ComparisonResult` importable from
+- [x] **Contract tests** (`tests/test_compare.py`): `compare` and `ComparisonResult` importable from
       `peeksy.compare`; `compare` signature
       `(baseline: str, current: str, diff_dir: str, threshold: float, tolerance: float) -> ComparisonResult`;
       `ComparisonResult` exposes `passed: bool`, `mismatch_percent: float`, `diff_path: str | None`
       (expected to fail now)
-- [ ] **Code**: create `peeksy/compare/result.py` — `ComparisonResult` record (dataclass or Pydantic
+- [x] **Code**: create `peeksy/compare/result.py` — `ComparisonResult` record (dataclass or Pydantic
       model — either satisfies the contract; keep it a plain immutable record)
-- [ ] **Code**: create `peeksy/compare/compare.py` — implement the 6-step algorithm; create
+- [x] **Code**: create `peeksy/compare/compare.py` — implement the 6-step algorithm; create
       `peeksy/compare/__init__.py` facade with `__all__ = ["ComparisonResult", "compare"]`
-- [ ] **Interface verification**: `uv run pytest tests/test_compare.py -v` — contract tests pass
-- [ ] **Logic tests** (`tests/test_compare.py`), synthetic PNGs via PIL — no browser:
+- [x] **Interface verification**: `uv run pytest tests/test_compare.py -v` — contract tests pass
+- [x] **Logic tests** (`tests/test_compare.py`), synthetic PNGs via PIL — no browser:
       `test_compare_passes_on_identical_images` (byte-identical PNGs → `passed is True`,
       `mismatch_percent == 0.0`, `diff_path is None`, no diff file written);
       `test_compare_tolerance_boundary_semantics` (100x100 baseline, current with exactly 100 pixels
@@ -445,11 +445,11 @@ the cook, is authoritative.
       `mismatch_percent == 100.0`, `diff_path is None`, no exception);
       edge — small real diff (e.g. 2px shift) → failed, diff PNG written into `diff_dir`, diff file
       loadable by PIL
-- [ ] **Debugging**: `uv run pytest tests/test_compare.py -v` — fix implementation until all pass
+- [x] **Debugging**: `uv run pytest tests/test_compare.py -v` — fix implementation until all pass
       (do NOT fix test code)
-- [ ] **Contract re-verification**: facade, signatures, and the passed/diff-path semantics match
+- [x] **Contract re-verification**: facade, signatures, and the passed/diff-path semantics match
       `peeksy/compare/CODEMANIFEST`
-- [ ] **Lint**: `uv run ruff check peeksy/compare tests/test_compare.py` + `uv run ruff format --check peeksy/compare tests/test_compare.py`
+- [x] **Lint**: `uv run ruff check peeksy/compare tests/test_compare.py` + `uv run ruff format --check peeksy/compare tests/test_compare.py`
 
 ### Task 5: `peeksy/reporting` — `Outcome` + `write_results` (TDD)
 
