@@ -11,11 +11,18 @@ Imports:
 
 Usages:
   typer: |
-    CLI commands are Typer commands on a single Typer app. --config takes the site folder
-    (or its suite.yml). --page and --component are repeatable filters (list[str] | None);
+    CLI commands are Typer commands on a single Typer app. --config (short -c) is a
+    REQUIRED-declared Typer option with the default "./peeksy.yml" — the project-root
+    suite file; a folder (or its suite.yml) is also accepted. --page and --component
+    are repeatable filters (list[str] | None);
     both applied as an AND. Commands load the config via `load_config` and delegate to the runner.
     test prints a one-line summary and then raise typer.Exit(code=exit_code) (never sys.exit)
     so CI fails on regression and pytest can still intercept the exit.
+    ONE app-level exception handler covers every configuration error path —
+    pydantic.ValidationError, yaml.YAMLError (syntactically broken YAML never reaches
+    Pydantic), FileNotFoundError/NotADirectoryError (missing --config path) — printing a
+    human-readable message (no Python traceback) and raising typer.Exit(code=1); it is
+    shared by generate/test/report.
 
 Annotations: |
   CLI cell — Typer facade for the peeksy commands.
@@ -30,7 +37,7 @@ Annotations: |
   annotations: |
     peeksy generate command — capture and store baselines.
 
-    `config`: path to the site folder (or its suite.yml)
+    `config`: path to the suite file (default ./peeksy.yml) or the site folder (or its suite.yml) — declared as the --config/-c Typer option
     `page`: repeatable page name filter (None => all)
     `component`: repeatable component name filter (None => all)
 
@@ -46,7 +53,7 @@ Annotations: |
   annotations: |
     peeksy test command — compare against baselines and fail CI on regression.
 
-    `config`: path to the site folder (or its suite.yml)
+    `config`: path to the suite file (default ./peeksy.yml) or the site folder (or its suite.yml) — declared as the --config/-c Typer option
     `page`: repeatable page name filter (None => all)
     `component`: repeatable component name filter (None => all)
 
@@ -64,7 +71,7 @@ Annotations: |
   annotations: |
     peeksy report command — build the Allure HTML report.
 
-    `config`: path to the site folder (or its suite.yml)
+    `config`: path to the suite file (default ./peeksy.yml) or the site folder (or its suite.yml) — declared as the --config/-c Typer option
 
     Algorithm:
     1. `load_config` `config` into a `Suite`

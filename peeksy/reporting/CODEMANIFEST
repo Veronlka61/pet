@@ -8,22 +8,27 @@ Annotations: |
   One test result is written per `Outcome`. status PASSED/FAILED = visual verdict; BROKEN =
   infrastructure failure, carried with an error message. Attachments are written only for
   non-None image paths, so a BROKEN outcome with no current_path (or no baseline_path)
-  simply omits that attachment. The Allure display name is {page} / {name} [{viewport}]
-  and testCaseId is peeksy::{page}::{name} (page-namespaced so the same component name on
-  different pages does not collapse).
+  simply omits that attachment; mismatch_percent is None for BROKEN (no comparison happened),
+  never a fake 0.0 that would read as a perfect match in numeric filtering. The Allure
+  display name is {suite} / {page} / {name} [{viewport}],
+  testCaseId is peeksy::{suite}::{page}::{name}[{viewport}] (suite+page-namespaced AND
+  viewport-suffixed so the same component name on different pages, different sites, or at
+  different viewports never collapses in history/trends), and the Allure suite label
+  carries the real site name from the `Outcome`.
 
 ---
 
-"Outcome(page: str, name: str, viewport: str, status: str, mismatch_percent: float, baseline_path: str | None, current_path: str | None, diff_path: str | None, error: str | None)":
+"Outcome(suite: str, page: str, name: str, viewport: str, status: str, mismatch_percent: float | None, baseline_path: str | None, current_path: str | None, diff_path: str | None, error: str | None)":
   location: outcome.py
   annotations: |
     One reportable result for a single (page, component, viewport) check.
 
+    `suite`: suite/site name — part of testCaseId and the Allure suite label
     `page`: page name
     `name`: component name
     `viewport`: viewport label, e.g. "1280x720"
     `status`: "PASSED", "FAILED", or "BROKEN"
-    `mismatch_percent`: mismatch percentage (0..100); 0.0 for BROKEN
+    `mismatch_percent`: mismatch percentage (0..100); None for BROKEN (no comparison happened)
     `baseline_path`: path to the baseline PNG attachment; None when no baseline exists (BROKEN)
     `current_path`: path to the current PNG attachment; None when capture failed (BROKEN)
     `diff_path`: path to the diff PNG attachment; None when not produced (passed or BROKEN)
@@ -31,6 +36,8 @@ Annotations: |
 
     Use `allure` for how `status` maps to the Allure Status.
   properties:
+    "suite -> str": |
+      Suite/site name; keys testCaseId and the Allure suite label.
     "page -> str": |
       Page name.
     "name -> str": |
@@ -39,8 +46,8 @@ Annotations: |
       Viewport label, e.g. "1280x720".
     "status -> str": |
       "PASSED", "FAILED", or "BROKEN".
-    "mismatch_percent -> float": |
-      Mismatch percentage; 0.0 for BROKEN.
+    "mismatch_percent -> float | None": |
+      Mismatch percentage (0..100); None for BROKEN (no comparison happened).
     "baseline_path -> str | None": |
       Path to the baseline PNG attachment; None when no baseline exists (BROKEN).
     "current_path -> str | None": |
@@ -59,12 +66,16 @@ Annotations: |
     `results_dir`: directory to populate with result JSON and attachment files
 
     Algorithm:
-    1. For each `Outcome`, derive a stable testCaseId/historyId as peeksy::{page}::{name} and the display name as {page} / {name} [{viewport}] per `allure`
+    0. Create `results_dir` if it does not exist (parents included) — writing must succeed on a fresh site checkout
+    1. For each `Outcome`, derive a stable testCaseId/historyId as peeksy::{suite}::{page}::{name}[{viewport}] (unique per (suite, page, component, viewport) so Allure history and trends keep one row per viewport), the display name as {suite} / {page} / {name} [{viewport}], and the Allure suite label from the `Outcome` suite field per `allure`
     2. For each non-None path among baseline_path, current_path, diff_path, copy the PNG into `results_dir` as an attachment; skip None paths (a BROKEN outcome may omit current_path or baseline_path)
     3. Write one result JSON with status mapped from the `Outcome` status per `allure`, attaching the copied PNGs
-    4. Append statusDetails with the mismatch percent when FAILED, or with the error message when BROKEN
+    4. Append statusDetails with the mismatch percent when FAILED, or with the error message when BROKEN (mismatch_percent is None — never render it for BROKEN)
 
     Use `allure` for the result model and attachment conventions.
+    Requirements:
+    - The routine writes only the outcomes it is given; clearing prior *-result.json/attachment
+      files from `results_dir` is the caller's (runner) responsibility — never silently mix runs.
 
 "build_report(results_dir: str, report_dir: str)":
   location: report.py

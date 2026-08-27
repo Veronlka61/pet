@@ -55,9 +55,10 @@ Conventions:
    `threshold` (per-pixel, 0..1) follows the same override pattern and is **not** conflated
    with `tolerance`.
 7. **`Action` is a data model in `config`; execution is in `capture`.** Supported `kind` values:
-   `click`, `hover`, `scroll_to`, `scroll_by`, `fill`, `press`, `select`, `wait`. They are written
-   in a short YAML form (`- click: "#sel"`, `- fill: ["#sel", "text"]`) that `load_config` parses
-   into `Action(kind, target, value)`; `capture` executes each via Playwright.
+   `click`, `hover`, `scroll_to`, `scroll_by`, `fill`, `press`, `select`, `wait`, `open`, `reload`.
+   They are written in a short YAML form (`- click: "#sel"`, `- fill: ["#sel", "text"]`,
+   `- reload: {}`) that `load_config` parses into `Action(kind, target, value)`;
+   `capture` executes each via Playwright.
 8. **`runner` and `capture` import 4 of `config`'s 6 types — by design.** `config` is a single
    domain dictionary of models, while `runner` (orchestrator) and `capture` (engine) work with all
    of those models by role. Cell boundaries are drawn by responsibility (data / compare / report /
@@ -124,10 +125,27 @@ Usages:
     is the allowed mismatch percent that decides pass/fail. Both accept a per-component
     override where None means "inherit the suite default".
     `Action` setup lists use a short YAML form parsed into Action(kind, target, value):
-    a single string is the target for click/hover/scroll_to or the value for press/scroll_by;
+    a single string is the target for click/hover/scroll_to or the value for press/scroll_by/open;
     a list is [target, value] for fill/select (and optionally press); wait takes a
     selector (appear), {selector: ..., hidden: true} (disappear), a millisecond number (pause),
-    or nothing (default stabilization).
+    or nothing (default stabilization); open takes a URL to navigate to as the value.
+    Page.wait_until selects the navigation wait strategy — allowed values: networkidle
+    (the default), domcontentloaded, load; anything else is a validation error. Pages with
+    long-polling/websockets/constant analytics never reach networkidle and should use
+    domcontentloaded plus explicit wait actions in setup.
+    Page.components are always kept in name-sorted order — components are captured in that
+    deterministic order regardless of filesystem file ordering.
+    A component's setup is SELF-SUFFICIENT: it must not rely on side effects left by previously
+    captured components (open menus, scroll position, hovers); when a component needs a clean
+    page, it starts its setup with reload (written as `- reload: {}`, no target, no value).
+    Page.url and a leading open action are mutually exclusive: url = None requires setup to
+    START with an open action (the deep-link flow), and a set url forbids open as the first
+    setup action — a model_validator rejects both violations so the page is never navigated
+    twice and never left without a start URL.
+    Relative baseline_path/results_path/report_path in suite.yml resolve against the SITE
+    FOLDER (load_config normalizes them to absolute paths), so the suite behaves identically
+    no matter which working directory peeksy is invoked from; absolute paths pass through
+    unchanged.
 
 Annotations: |
   Config cell — validated YAML configuration model for a peeksy site (variant D layout).
@@ -159,16 +177,18 @@ Annotations: |
   annotations: |
     One setup action to perform on a page or component before a screenshot.
 
-    `kind`: one of click, hover, scroll_to, scroll_by, fill, press, select, wait
+    `kind`: one of click, hover, scroll_to, scroll_by, fill, press, select, wait, open, reload
     `target`: CSS selector of the element the action targets; None when the action needs no element
-    `value`: auxiliary value whose meaning depends on `kind` — fill/press/select text/key/option, scroll_by pixels, wait milliseconds-or-mode; None when not applicable
+    `value`: auxiliary value whose meaning depends on `kind` — fill/press/select text/key/option, scroll_by pixels, wait milliseconds-or-mode, open a URL; None when not applicable
 
     `Action` is data only — it carries no behaviour. The capture cell interprets each kind
     via Playwright. The short YAML form is parsed into this model by `load_config`
     per `pydantic_config`. Per-kind argument rules: click/hover/scroll_to take a `target`;
     scroll_by takes pixel `value` (or [x, y]); fill/select take [target, value]; press takes a
     key `value` (optionally [target, key]); wait takes a selector `target` (appear),
-    {selector, hidden} (disappear), a millisecond `value` (pause), or nothing (default stabilization).
+    {selector, hidden} (disappear), a millisecond `value` (pause), or nothing (default stabilization);
+    open takes a URL `value` and targets no element; reload re-navigates the current URL and
+    takes neither `target` nor `value` (use it to start a component's setup from a clean page).
 
     Requirements:
     - click/hover/scroll_to: `target` = selector, `value` = None
@@ -176,15 +196,17 @@ Annotations: |
     - press: `value` = a Playwright key name ("Enter", "Tab", ...); `target` optional (element to press on)
     - scroll_by: `value` = pixels ("300") or "[x, y]"
     - wait: `value` = milliseconds ("500"), "hidden" (with a `target` selector), or None (default stabilization)
+    - open: `value` = URL to navigate the page to; `target` = None
+    - reload: `target` = None, `value` = None (reload the currently open page)
 
     Use `pydantic_config` for the model definition.
   properties:
     "kind -> str": |
-      One of click, hover, scroll_to, scroll_by, fill, press, select, wait.
+      One of click, hover, scroll_to, scroll_by, fill, press, select, wait, open, reload.
     "target -> str | None": |
       CSS selector of the action target; None when no element is needed.
     "value -> str | None": |
-      Auxiliary value (text/key/option/pixels/milliseconds/mode); meaning depends on kind; None when not applicable.
+      Auxiliary value (text/key/option/pixels/milliseconds/mode/URL); meaning depends on kind; None when not applicable.
 
 "Component(name: str, selector: str, mask_selectors: list[str], viewports: list[Viewport], threshold: float | None, tolerance: float | None, setup: list[Action])":
   location: models.py
@@ -216,28 +238,34 @@ Annotations: |
     "setup -> list[Action]": |
       Component-level actions to run before the shot.
 
-"Page(name: str, url: str, setup: list[Action], components: list[Component])":
+"Page(name: str, url: str | None, wait_until: str, setup: list[Action], components: list[Component])":
   location: models.py
   annotations: |
-    One page of the site: a URL, page-level setup actions, and the components on it.
+    One page of the site: a URL, navigation wait strategy, page-level setup actions, and the components on it.
 
     `name`: page identifier, derived from its folder name
-    `url`: page URL to open before capturing any of its components
+    `url`: page URL to open before capturing any of its components; None for a deep-link flow where setup starts with an open action
+    `wait_until`: navigation wait strategy forwarded to page.goto — "networkidle" (default when omitted in page.yml), "domcontentloaded", or "load"; live pages (long-polling, websockets, constant analytics) should use "domcontentloaded" plus explicit wait actions in setup
     `setup`: page-level actions run once per viewport after navigation (e.g. close cookie banner, log in)
-    `components`: components discovered as the sibling *.yml files of this page's page.yml
+    `components`: components discovered as the sibling *.yml files of this page's page.yml, kept in name-sorted order so capture order is deterministic regardless of filesystem ordering
 
     Validation: Component.name values MUST be unique within `components` of this page; a
     model_validator rejects duplicates so they cannot collide on the page-namespaced
-    baseline path or testCaseId. Use `pydantic_config` for the model definition.
+    baseline path or testCaseId. `wait_until` must be one of networkidle/domcontentloaded/load.
+    url and a leading open are mutually exclusive: url = None requires setup[0] to be an open
+    action; a set url forbids open as setup[0] — the page is never navigated twice and never
+    left without a start URL. Use `pydantic_config` for the model definition.
   properties:
     "name -> str": |
       Page identifier (from its folder name).
-    "url -> str": |
-      Page URL to open before capturing.
+    "url -> str | None": |
+      Page URL to open before capturing; None for a deep-link flow (setup starts with open).
+    "wait_until -> str": |
+      Navigation wait strategy: networkidle (default), domcontentloaded, or load.
     "setup -> list[Action]": |
       Page-level actions run once per viewport after navigation.
     "components -> list[Component]": |
-      Components on this page (sibling *.yml files).
+      Components on this page (sibling *.yml files), name-sorted for deterministic capture order.
 
 "Suite(name: str, pages: list[Page], baseline_path: str, results_path: str, report_path: str, threshold: float, tolerance: float)":
   location: models.py
@@ -246,9 +274,9 @@ Annotations: |
 
     `name`: suite/site name (used as the Allure suite label)
     `pages`: pages to capture and compare
-    `baseline_path`: directory for baseline PNGs (written by generate, read-only for test), organized as {baseline_path}/{page}/{name}_{WxH}.png
-    `results_path`: directory for Allure results and current/diff PNGs
-    `report_path`: directory for the built HTML report
+    `baseline_path`: directory for baseline PNGs (written by generate, read-only for test), organized as {baseline_path}/{page}/{name}_{WxH}.png; relative values resolve against the site folder
+    `results_path`: directory for Allure results and current/diff PNGs; relative values resolve against the site folder
+    `report_path`: directory for the built HTML report; relative values resolve against the site folder
     `threshold`: suite-default per-pixel sensitivity (0..1) forwarded to pixelmatch
     `tolerance`: suite-default allowed mismatch % — a component PASSES when mismatch% <= tolerance
 
@@ -280,7 +308,7 @@ Annotations: |
 
     Algorithm:
     1. Resolve the site folder from `path` (if `path` is suite.yml, use its parent)
-    2. Read and validate suite.yml for the suite meta (name, paths, threshold, tolerance)
+    2. Read and validate suite.yml for the suite meta (name, paths, threshold, tolerance); normalize relative baseline_path/results_path/report_path to absolute paths against the site folder so the suite is CWD-independent
     3. For each subfolder of pages/, read its page.yml (url, setup) and discover its components as the other *.yml files in that folder
     4. Build `Page` and `Component` models (names derived from folder/filenames) and validate per `pydantic_config`, including per-page name uniqueness
     5. Return the resulting `Suite`; raise on any validation or IO error with a human-readable message
@@ -293,7 +321,6 @@ CreatedAt: 13/07/26
 Description: |
   Config cell — Pydantic v2 models (Viewport, Action, Component, Page, Suite) and the
   site-folder loader for the variant D layout, including the configurable `threshold`/`tolerance`.
-
 ```
 
 ## .usages/config.md
@@ -330,6 +357,10 @@ for page in suite.pages:
 ```
 
 - `page.url` is the page to open; `page.setup` runs once per viewport after navigation.
+- `url` and a leading `open` are mutually exclusive (validated): `url: null` requires `setup`
+  to start with `- open: <url>` (deep-link flow); a set `url` forbids `open` as the first
+  action — the page is never navigated twice and never left without a start URL.
+- `page.wait_until` selects the navigation wait strategy: `networkidle` (default), `domcontentloaded`, or `load`. Pages with long-polling/websockets/constant analytics never reach `networkidle` — set `wait_until: domcontentloaded` and add explicit `- wait: "#content"` actions in setup.
 - `component.setup` runs before that component's shot.
 - Per-component `threshold`/`tolerance` override the suite defaults; `None` means inherit.
 
@@ -339,7 +370,12 @@ for page in suite.pages:
 
 ```yaml
 # page.yml — page-level setup runs once per viewport
+# url + a leading open are mutually exclusive:
+#   url: https://example.com/            # normal start page (usual case)
+#   url: null + first setup action open  # deep-link flow (e.g. after login)
+wait_until: domcontentloaded   # optional: networkidle (default) | domcontentloaded | load
 setup:
+  - open: "https://example.com/login"     # navigate to a URL directly
   - click: "#cookie-accept"               # click an element
   - scroll_to: "#main"                    # scroll an element into view
   - wait: 500                             # pause 500 ms
@@ -356,11 +392,20 @@ setup:
   - select: ["#country", "RU"]            # [target, value]: pick an option
   - scroll_by: 300                        # scroll down 300 px
   - scroll_by: [0, 300]                   # scroll [x, y]
+  - reload: {}                            # clean-page isolation before this component's shot
 ```
 
-- A single string is the `target` for click/hover/scroll_to, or the `value` for press/scroll_by.
+- A single string is the `target` for click/hover/scroll_to, or the `value` for press/scroll_by/open.
 - A list is `[target, value]` for fill/select (and optionally press).
+- `open` navigates the page to its `value` URL (target is unused); useful for redirects or
+  deep-linking to a state mid-setup.
+- `reload` re-navigates the current URL (`- reload: {}`, no arguments) — use it when a component
+  must not inherit side effects (open menus, scroll) from previously captured components.
 - `wait` is overloaded by value type (see examples).
+
+**Capture order:** components are captured in **name-sorted** order within a page, regardless of
+filesystem file ordering — keep each component's `setup` self-sufficient; add `- reload: {}`
+at its start when it needs a clean page.
 
 ## Naming and uniqueness
 
@@ -373,6 +418,10 @@ setup:
 - `suite.baseline_path` — baseline PNGs, organized as `{baseline_path}/{page}/{name}_{WxH}.png`
 - `suite.results_path` — Allure results + current/diff PNGs
 - `suite.report_path` — built HTML report
+- Relative paths in `suite.yml` resolve against the **site folder** (`load_config` normalizes
+  them to absolute), so `peeksy generate`/`test` behave identically from any working directory:
+  `baseline_path: baselines` next to `sites/example.com/suite.yml` means `sites/example.com/baselines/`.
+  Absolute paths pass through unchanged.
 ````
 
 ---
@@ -441,7 +490,6 @@ CreatedAt: 13/07/26
 Description: |
   Compare cell — pixelmatch comparison producing a pass/fail verdict, mismatch %,
   and diff overlay; `tolerance` decides the verdict.
-
 ```
 
 ## .usages/compare.md
@@ -499,22 +547,27 @@ Annotations: |
   One test result is written per `Outcome`. status PASSED/FAILED = visual verdict; BROKEN =
   infrastructure failure, carried with an error message. Attachments are written only for
   non-None image paths, so a BROKEN outcome with no current_path (or no baseline_path)
-  simply omits that attachment. The Allure display name is {page} / {name} [{viewport}]
-  and testCaseId is peeksy::{page}::{name} (page-namespaced so the same component name on
-  different pages does not collapse).
+  simply omits that attachment; mismatch_percent is None for BROKEN (no comparison happened),
+  never a fake 0.0 that would read as a perfect match in numeric filtering. The Allure
+  display name is {suite} / {page} / {name} [{viewport}],
+  testCaseId is peeksy::{suite}::{page}::{name}[{viewport}] (suite+page-namespaced AND
+  viewport-suffixed so the same component name on different pages, different sites, or at
+  different viewports never collapses), and the Allure suite label
+  carries the real site name from the `Outcome`.
 
 ---
 
-"Outcome(page: str, name: str, viewport: str, status: str, mismatch_percent: float, baseline_path: str | None, current_path: str | None, diff_path: str | None, error: str | None)":
+"Outcome(suite: str, page: str, name: str, viewport: str, status: str, mismatch_percent: float | None, baseline_path: str | None, current_path: str | None, diff_path: str | None, error: str | None)":
   location: outcome.py
   annotations: |
     One reportable result for a single (page, component, viewport) check.
 
+    `suite`: suite/site name — part of testCaseId and the Allure suite label
     `page`: page name
     `name`: component name
     `viewport`: viewport label, e.g. "1280x720"
     `status`: "PASSED", "FAILED", or "BROKEN"
-    `mismatch_percent`: mismatch percentage (0..100); 0.0 for BROKEN
+    `mismatch_percent`: mismatch percentage (0..100); None for BROKEN (no comparison happened)
     `baseline_path`: path to the baseline PNG attachment; None when no baseline exists (BROKEN)
     `current_path`: path to the current PNG attachment; None when capture failed (BROKEN)
     `diff_path`: path to the diff PNG attachment; None when not produced (passed or BROKEN)
@@ -522,6 +575,8 @@ Annotations: |
 
     Use `allure` for how `status` maps to the Allure Status.
   properties:
+    "suite -> str": |
+      Suite/site name; keys testCaseId and the Allure suite label.
     "page -> str": |
       Page name.
     "name -> str": |
@@ -530,8 +585,8 @@ Annotations: |
       Viewport label, e.g. "1280x720".
     "status -> str": |
       "PASSED", "FAILED", or "BROKEN".
-    "mismatch_percent -> float": |
-      Mismatch percentage; 0.0 for BROKEN.
+    "mismatch_percent -> float | None": |
+      Mismatch percentage (0..100); None for BROKEN (no comparison happened).
     "baseline_path -> str | None": |
       Path to the baseline PNG attachment; None when no baseline exists (BROKEN).
     "current_path -> str | None": |
@@ -550,10 +605,10 @@ Annotations: |
     `results_dir`: directory to populate with result JSON and attachment files
 
     Algorithm:
-    1. For each `Outcome`, derive a stable testCaseId/historyId as peeksy::{page}::{name} and the display name as {page} / {name} [{viewport}] per `allure`
+    1. For each `Outcome`, derive a stable testCaseId/historyId as peeksy::{suite}::{page}::{name}, the display name as {suite} / {page} / {name} [{viewport}], and the Allure suite label from the `Outcome` suite field per `allure`
     2. For each non-None path among baseline_path, current_path, diff_path, copy the PNG into `results_dir` as an attachment; skip None paths (a BROKEN outcome may omit current_path or baseline_path)
     3. Write one result JSON with status mapped from the `Outcome` status per `allure`, attaching the copied PNGs
-    4. Append statusDetails with the mismatch percent when FAILED, or with the error message when BROKEN
+    4. Append statusDetails with the mismatch percent when FAILED, or with the error message when BROKEN (mismatch_percent is None — never render it for BROKEN)
 
     Use `allure` for the result model and attachment conventions.
 
@@ -596,15 +651,15 @@ report. Target audience: the `runner` cell.
 from peeksy.reporting import write_results, Outcome
 
 outcomes = [
-    Outcome(page="home", name="header", viewport="1280x720", status="FAILED",
+    Outcome(suite="example.com", page="home", name="header", viewport="1280x720", status="FAILED",
             mismatch_percent=2.34,
             baseline_path="baselines/home/header_1280x720.png",
             current_path="results/home/header_1280x720.current.png",
             diff_path="results/home/header_1280x720.diff.png",
             error=None),
-    # BROKEN: capture failed, no current PNG to attach
-    Outcome(page="home", name="sidebar", viewport="1280x720", status="BROKEN",
-            mismatch_percent=0.0,
+    # BROKEN: capture failed — no current PNG, no comparison, mismatch_percent is None
+    Outcome(suite="example.com", page="home", name="sidebar", viewport="1280x720", status="BROKEN",
+            mismatch_percent=None,
             baseline_path="baselines/home/sidebar_1280x720.png",
             current_path=None,
             diff_path=None,
@@ -613,11 +668,15 @@ outcomes = [
 write_results(outcomes, results_dir="results")
 ```
 
-- One result JSON is written per `Outcome`; the display name is `{page} / {name} [{viewport}]`.
-- `testCaseId`/`historyId` are `peeksy::{page}::{name}` (page-namespaced).
+- One result JSON is written per `Outcome`; the display name is `{suite} / {page} / {name} [{viewport}]`.
+- `testCaseId`/`historyId` are `peeksy::{suite}::{page}::{name}[{viewport}]` (suite+page-namespaced,
+  viewport-suffixed — the same component name on different pages, different sites, or at different
+  viewports never collapses).
+- The Allure suite label carries the real site name from `suite`.
 - `status` PASSED/FAILED is the visual verdict; BROKEN is an infrastructure failure, shown with its `error` message.
 - Attachments are written only for non-None paths — a BROKEN outcome with `current_path=None` simply omits the current image.
-- `statusDetails` carries the mismatch percent when FAILED, or the `error` reason when BROKEN.
+- `statusDetails` carries the mismatch percent when FAILED, or the `error` reason when BROKEN
+  (`mismatch_percent` is `None` for BROKEN — never a fake `0.0` in numeric filtering).
 
 ## Stage 2 — build the HTML report
 
@@ -657,15 +716,20 @@ Annotations: |
   the whole run. `Component`, `Viewport`, `Page`, and `Action` come from Imports.
   Capture is split: open_page navigates and runs the page setup once per viewport;
   capture_component runs the component setup, masked, and shoots.
-  Masking uses visibility: hidden (never display: none) so the masked element keeps its
-  layout box — display: none would reflow neighbors and shift the component.
+  Masking lays an opaque gray overlay (::after) over each masked element so the masked area is
+  pixel-identical across runs regardless of what is underneath, while keeping the layout box
+  (never display: none, which would reflow neighbors and shift the component).
   Each `Action` is interpreted via Playwright per `playwright` according to its kind:
   click/hover/fill/press/select act on a located element, scroll_to/scroll_by move the page,
-  wait blocks until an element appears/disappears, a millisecond elapses, or the default
-  stabilization (networkidle + fonts.ready) completes.
+  open navigates to the URL given as its value and reload re-navigates the current URL — both
+  with the same wait_until + fonts determinism as open_page — and wait blocks until an element
+  appears/disappears, a millisecond elapses, or the default stabilization completes.
   A component selector may be a Playwright piercing selector (e.g. my-widget >> button.save,
   which crosses shadow-DOM boundaries) or address a component inside an <iframe> (resolved via
   frame_locator); capture_component localizes it the same way as a plain CSS selector.
+  mask_selectors are located with the SAME locate helper as the component selector — plain CSS,
+  piercing, or inside an <iframe> — so any dynamic zone reachable from the component is maskable
+  (e.g. my-widget >> form.order .date masks a date inside the same shadow DOM).
 
 ---
 
@@ -687,7 +751,7 @@ Annotations: |
 
       Algorithm:
       1. Set the page viewport to `viewport` per `playwright`
-      2. Navigate to page.url with wait_until="networkidle" per `playwright`
+      2. If page.url is not None, navigate to it with wait_until=page.wait_until (networkidle by default; domcontentloaded/load for live pages) per `playwright`; when url is None the first setup action (guaranteed to be open by validation) performs the navigation
       3. Disable animations/transitions and wait for document.fonts.ready per `playwright`
       4. For each `Action` in page.setup, execute it via Playwright according to its kind
 
@@ -702,7 +766,7 @@ Annotations: |
 
       Algorithm:
       1. For each `Action` in component.setup, execute it via Playwright according to its kind
-      2. For every mask selector of `component`, set visibility: hidden on the matched elements per `playwright` (not display: none — preserve the layout box)
+      2. For every mask selector of `component` (located with the same locate helper as the component selector — plain CSS, piercing, or inside an <iframe>), lay an opaque gray overlay (::after) over the matched elements per `playwright` — a solid overlay yields pixel-identical masks regardless of the underlying content, while preserving the layout box (never display: none)
       3. Locate the `component` selector (first match) — a plain CSS selector, a piercing selector crossing shadow-DOM boundaries, or a selector inside an <iframe> via frame_locator — wait for visible, and screenshot into `out_path`
       4. Return `out_path`
 
@@ -755,7 +819,7 @@ finally:
 - `capture_component` runs `component.setup`, masks, and writes the PNG to `out_path`.
 - `open_page`/`capture_component` require `open()` first; always `close()` the session after use.
 - Captures are idempotent: same component on the same open page ⇒ pixelmatch-clean images.
-- Mask selectors are hidden with `visibility: hidden` (never `display: none`) to preserve layout.
+- Mask selectors are covered with an opaque gray overlay (`::after`, never `display: none`) so the masked area is pixel-identical across runs while preserving layout; masks are located with the same helper as the component selector (plain CSS, piercing `>>`, or inside an `<iframe>`).
 ````
 
 ---
@@ -798,6 +862,9 @@ Usages:
     current {results_path}/{page}/{name}_{WxH}.current.png, diff {results_path}/{page}/{name}_{WxH}.diff.png.
     Capture is grouped by (page, viewport): open_page is called once per (page, viewport),
     then each component at that viewport is captured — page setup never repeats per component.
+    Components are processed in name-sorted order (deterministic regardless of filesystem
+    ordering); a component's setup is self-sufficient and must not rely on side effects of
+    previously captured components — a component needing a clean page starts its setup with reload.
     If open_page fails, every (component, viewport) on that page becomes BROKEN with the
     page-setup error. pages filters by page name, components by component name; both None ⇒ all.
     Before writing results, test clears the results_path of prior *-result.json and
@@ -849,14 +916,14 @@ Annotations: |
        a. Compute the set of Viewports needed = union of viewports across its filtered components
        b. For each `Viewport`:
           i. Try: open_page(page, viewport)
-          ii. Except: append a BROKEN `Outcome` (page, name, viewport, error "page setup failed: ...", current_path None) for every component at this viewport per `run_policy`; continue to the next viewport
+          ii. Except: append a BROKEN `Outcome` (suite = suite.name, page, name, viewport, error "page setup failed: ...", current_path None) for every component at this viewport per `run_policy`; continue to the next viewport
           iii. For each component at this `Viewport`:
                - Try: capture_component -> current {results_path}/{page}/{name}_{WxH}.current.png
                - Except capture error: append a BROKEN `Outcome` with error and current_path None; continue
                - If baseline {baseline_path}/{page}/{name}_{WxH}.png does not exist: append a BROKEN `Outcome` with error "baseline not found; run peeksy generate" per `run_policy`; continue
                - Resolve effective threshold/tolerance = component override ?? `suite` default per `run_policy`
                - `compare` baseline vs current with the resolved thresholds -> `ComparisonResult`; status = PASSED if it passed, else FAILED
-               - Append a PASSED/FAILED `Outcome` (page, name, viewport, status, mismatch_percent, baseline/current/diff paths, error None)
+               - Append a PASSED/FAILED `Outcome` (suite = suite.name, page, name, viewport, status, mismatch_percent, baseline/current/diff paths, error None)
     4. Clear the `suite` results_path of prior *-result.json and attachment files per `run_policy`
     5. `write_results` the outcomes into the `suite` results_path
     6. Return `exit_code` 0 if all outcomes PASSED else 1
@@ -1096,13 +1163,20 @@ Decisions folded into the CODEMANIFESTs and `.usages` above:
 - [x] **BROKEN no longer requires an image** — `Outcome.baseline_path`/`current_path` are `str | None`; `Outcome.error: str | None` carries the reason; `write_results` attaches only existing PNGs (`reporting`, `runner`).
 - [x] **Missing baseline is BROKEN, not FAILED** — `run_test` checks baseline existence before `compare` and emits `error="baseline not found; run 'peeksy generate'"` (`runner`).
 - [x] **Page-grouped capture** — `open_page` is called once per `(page, viewport)`; a page-setup failure marks every component at that viewport BROKEN (`runner`).
-- [x] **Masking is `visibility: hidden`** — never `display: none` — so masked elements keep their layout box (`capture`).
+- [x] **Masking is an opaque gray overlay (`::after`)** — never `display: none` — so the masked area is pixel-identical across runs regardless of underlying content, while keeping the layout box (`capture`).
 - [x] **`test` exits via `typer.Exit`** — `raise typer.Exit(code=exit_code)` after a one-line summary; never `sys.exit` (`cli`).
 - [x] **Missing `allure` CLI is a clean error** — `build_report` checks `shutil.which("allure")`; the `report` command prints a clear message instead of a traceback (`reporting`, `cli`).
 - [x] **Results dir cleared per run** — `run_test` removes prior `*-result.json`/attachment files before writing (`runner`).
 - [x] **Page-namespaced identity** — display name `{page} / {name} [{viewport}]`, `testCaseId` `peeksy::{page}::{name}`, baseline `{baseline_path}/{page}/{name}_{WxH}.png` (`reporting`, `runner`).
 - [x] **Piercing / iframe selectors supported** — a component `selector` may cross shadow-DOM boundaries (`>>`) or live inside an `<iframe>` (`frame_locator`); `capture_component` localizes it the same way as a plain CSS selector (`capture`).
 - [x] **High config coupling is intentional** — `runner` and `capture` import 4 of `config`'s 6 types by role (orchestrator + engine work with all domain models); boundaries are by responsibility, not import count (design decision #8).
+- [x] **Configurable navigation wait** — `Page.wait_until` (networkidle | domcontentloaded | load, default networkidle) forwarded to `page.goto`; live pages (polling/websockets/analytics) use domcontentloaded plus explicit `wait` actions instead of never reaching networkidle (`config`, `capture`, `playwright`).
+- [x] **Deterministic capture order** — `Page.components` are kept name-sorted, so capture order never depends on filesystem ordering; a component's `setup` is self-sufficient, and `reload` (`- reload: {}`) gives point-in-time clean-page isolation without a global per-component reload tax (`config`, `runner`, `capture`, `playwright`).
+- [x] **`url` ⇄ `open` exclusivity** — `Page.url: str | None`; `url = None` requires `setup` to start with an `open` action (deep-link flow), a set `url` forbids `open` as the first action — a `model_validator` enforces both, so the page is never navigated twice and never left without a start URL; `open_page` skips `goto` when `url` is None (`config`, `capture`).
+- [x] **Suite-namespaced report identity** — `Outcome.suite: str` (from `Suite.name`); `testCaseId`/`historyId` = `peeksy::{suite}::{page}::{name}`, display name `{suite} / {page} / {name} [{viewport}]`, Allure suite label = real site name — the same component name on different sites never collapses in history/trends (`reporting`, `runner`).
+- [x] **`mismatch_percent` is `None` for BROKEN** — no comparison happened, so the percent does not exist; a fake `0.0` would read as a perfect match in numeric filtering/aggregation. `write_results` renders the percent in statusDetails only for FAILED (`reporting`).
+- [x] **Artifact paths resolve against the site folder** — `load_config` normalizes relative `baseline_path`/`results_path`/`report_path` to absolute against the site dir (absolute pass through), so generate/test behave identically from any CWD — no silent BROKEN from a different working directory (`config`).
+- [x] **Masks are selector-symmetric** — `mask_selectors` are located with the same locate helper as the component selector (plain CSS, piercing `>>`, or inside an `<iframe>`), so any dynamic zone reachable from the component is maskable (`capture`, `playwright`).
 
 ## DSL self-check (Phase 6)
 

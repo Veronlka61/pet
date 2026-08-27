@@ -18,16 +18,20 @@ Annotations: |
   the whole run. `Component`, `Viewport`, `Page`, and `Action` come from Imports.
   Capture is split: open_page navigates and runs the page setup once per viewport;
   capture_component runs the component setup, masked, and shoots.
-  Masking uses visibility: hidden (never display: none) so the masked element keeps its
-  layout box — display: none would reflow neighbors and shift the component.
+  Masking lays an opaque gray overlay (::after) over each masked element so the masked area is
+  pixel-identical across runs regardless of what is underneath, while keeping the layout box
+  (never display: none, which would reflow neighbors and shift the component).
   Each `Action` is interpreted via Playwright per `playwright` according to its kind:
   click/hover/fill/press/select act on a located element, scroll_to/scroll_by move the page,
-  open navigates the page to the URL given as its value with the same networkidle + fonts
-  determinism as open_page, and wait blocks until an element appears/disappears, a millisecond
-  elapses, or the default stabilization (networkidle + fonts.ready) completes.
+  open navigates to the URL given as its value and reload re-navigates the current URL — both
+  with the same wait_until + fonts determinism as open_page — and wait blocks until an element
+  appears/disappears, a millisecond elapses, or the default stabilization completes.
   A component selector may be a Playwright piercing selector (e.g. my-widget >> button.save,
   which crosses shadow-DOM boundaries) or address a component inside an <iframe> (resolved via
   frame_locator); capture_component localizes it the same way as a plain CSS selector.
+  mask_selectors are located with the SAME locate helper as the component selector — plain CSS,
+  piercing, or inside an <iframe> — so any dynamic zone reachable from the component is maskable
+  (e.g. my-widget >> form.order .date masks a date inside the same shadow DOM).
 
 ---
 
@@ -49,7 +53,7 @@ Annotations: |
 
       Algorithm:
       1. Set the page viewport to `viewport` per `playwright`
-      2. Navigate to page.url with wait_until="networkidle" per `playwright`
+      2. If page.url is not None, navigate to it with wait_until=page.wait_until (networkidle by default; domcontentloaded/load for live pages) per `playwright`; when url is None the first setup action (guaranteed to be open by validation) performs the navigation
       3. Disable animations/transitions and wait for document.fonts.ready per `playwright`
       4. For each `Action` in page.setup, execute it via Playwright according to its kind
 
@@ -64,9 +68,10 @@ Annotations: |
 
       Algorithm:
       1. For each `Action` in component.setup, execute it via Playwright according to its kind
-      2. For every mask selector of `component`, set visibility: hidden on the matched elements per `playwright` (not display: none — preserve the layout box)
-      3. Locate the `component` selector (first match) — a plain CSS selector, a piercing selector crossing shadow-DOM boundaries, or a selector inside an <iframe> via frame_locator — wait for visible, and screenshot into `out_path`
-      4. Return `out_path`
+      2. Re-apply the animation-disable CSS and wait for document.fonts.ready — an open or reload action inside the setup navigates away and drops the style tag injected by open_page (the deep-link flow injects it on a blank page), so determinism must be re-established after the setup actions
+      3. For every mask selector of `component` (located with the same locate helper as the component selector — plain CSS, piercing, or inside an <iframe>), lay an opaque gray overlay (::after) over the matched elements per `playwright` — a solid overlay yields pixel-identical masks regardless of the underlying content, while preserving the layout box (never display: none)
+      4. Locate the `component` selector (first match) — a plain CSS selector, a piercing selector crossing shadow-DOM boundaries, or a selector inside an <iframe> via frame_locator — wait for visible, and screenshot into `out_path`
+      5. Return `out_path`
 
       Use `playwright` for the capture routine, action execution, and masking.
       Constraints: idempotent — two captures of the same `Component` on the same open page produce pixelmatch-clean images.

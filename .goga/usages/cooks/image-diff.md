@@ -22,13 +22,15 @@ This file covers *how to use pixelmatch*. It does not describe the cell contract
 ## Setup
 
 ```bash
-uv add pixelmatch pillow
+uv add pixelmatch==0.4.0 pillow
 ```
 
-> Pin the exact `pixelmatch` version in `pyproject.toml`. There are several
-> Python ports under this name; the API below matches the maintained port that
-> accepts Pillow images. Verify the call signature against the pinned version
-> and adapt if it differs.
+> The `pixelmatch` name on PyPI resolves to the maintained Python port (v0.4.0,
+> released 2026-03) of the original JS library. The **PIL-aware entry point lives in
+> `pixelmatch.contrib.PIL`** — NOT the top-level `pixelmatch` module, which operates on
+> raw RGBA arrays and needs explicit width/height. Pin the exact version in
+> `pyproject.toml` (`pixelmatch==0.4.0`) and re-verify the import path once at
+> implementation time (`uv run python -c "from pixelmatch.contrib.PIL import pixelmatch"`).
 
 ---
 
@@ -36,7 +38,7 @@ uv add pixelmatch pillow
 
 ```python
 from PIL import Image
-from pixelmatch import pixelmatch
+from pixelmatch.contrib.PIL import pixelmatch
 
 
 def compare(baseline_path: str, current_path: str, diff_path: str,

@@ -31,8 +31,15 @@ Usages:
     current {results_path}/{page}/{name}_{WxH}.current.png, diff {results_path}/{page}/{name}_{WxH}.diff.png.
     Capture is grouped by (page, viewport): open_page is called once per (page, viewport),
     then each component at that viewport is captured — page setup never repeats per component.
+    Components are processed in name-sorted order (deterministic regardless of filesystem
+    ordering); a component's setup is self-sufficient and must not rely on side effects of
+    previously captured components — a component needing a clean page starts its setup with reload.
     If open_page fails, every (component, viewport) on that page becomes BROKEN with the
     page-setup error. pages filters by page name, components by component name; both None ⇒ all.
+    The CaptureSession is closed in a finally block in both generate and test.
+    generate is fail-fast: the first capture error closes the session and propagates
+    (re-run with --page/--component to resume); test never aborts on capture errors —
+    they become BROKEN outcomes.
     Before writing results, test clears the results_path of prior *-result.json and
     attachment files so consecutive runs never silently mix.
 
@@ -56,11 +63,11 @@ Annotations: |
 
     Algorithm:
     1. Filter suite.pages by `pages` and each page's components by `components` per `run_policy` (None => all)
-    2. Open a `CaptureSession`
+    2. Open a `CaptureSession`; the capture loop below runs in try/finally so the session is closed even when a capture error propagates
     3. For each filtered `Page`:
-       a. Compute the set of Viewports needed = union of viewports across its filtered components
+       a. Compute the ordered viewport list = unique viewports across its filtered components, deduplicated preserving first-seen order over the name-sorted components (deterministic; no set iteration)
        b. For each `Viewport`: open_page(page, viewport), then for each component that includes this `Viewport`, capture_component into {baseline_path}/{page}/{name}_{WxH}.png per `run_policy`
-    4. Close the `CaptureSession`
+    4. Close the `CaptureSession` in the finally block
 
     Use `run_policy` for path conventions and capture grouping.
     Use `CaptureSession` from Imports for capture.
@@ -77,22 +84,23 @@ Annotations: |
 
     Algorithm:
     1. Filter suite.pages by `pages` and each page's components by `components` per `run_policy` (None => all)
-    2. Open a `CaptureSession`; collect `Outcome`s
+    2. Open a `CaptureSession`; collect `Outcome`s; the capture loop below runs in try/finally so the session is closed even when an unexpected error propagates
     3. For each filtered `Page`:
-       a. Compute the set of Viewports needed = union of viewports across its filtered components
+       a. Compute the ordered viewport list = unique viewports across its filtered components, deduplicated preserving first-seen order over the name-sorted components (deterministic; no set iteration)
        b. For each `Viewport`:
           i. Try: open_page(page, viewport)
-          ii. Except: append a BROKEN `Outcome` (page, name, viewport, error "page setup failed: ...", current_path None) for every component at this viewport per `run_policy`; continue to the next viewport
+          ii. Except: append a BROKEN `Outcome` (suite = suite.name, page, name, viewport, error "page setup failed: ...", current_path None) for every component at this viewport per `run_policy`; continue to the next viewport
           iii. For each component at this `Viewport`:
                - Try: capture_component -> current {results_path}/{page}/{name}_{WxH}.current.png
                - Except capture error: append a BROKEN `Outcome` with error and current_path None; continue
                - If baseline {baseline_path}/{page}/{name}_{WxH}.png does not exist: append a BROKEN `Outcome` with error "baseline not found; run peeksy generate" per `run_policy`; continue
                - Resolve effective threshold/tolerance = component override ?? `suite` default per `run_policy`
                - `compare` baseline vs current with the resolved thresholds -> `ComparisonResult`; status = PASSED if it passed, else FAILED
-               - Append a PASSED/FAILED `Outcome` (page, name, viewport, status, mismatch_percent, baseline/current/diff paths, error None)
-    4. Clear the `suite` results_path of prior *-result.json and attachment files per `run_policy`
-    5. `write_results` the outcomes into the `suite` results_path
-    6. Return `exit_code` 0 if all outcomes PASSED else 1
+               - Append a PASSED/FAILED `Outcome` (suite = suite.name, page, name, viewport, status, mismatch_percent, baseline/current/diff paths, error None)
+    4. Close the `CaptureSession` in the finally block — the browser is torn down even when an unexpected error propagates
+    5. Clear the `suite` results_path of prior *-result.json and attachment files per `run_policy`
+    6. `write_results` the outcomes into the `suite` results_path
+    7. Return `exit_code` 0 if all outcomes PASSED else 1
 
     Use `run_policy` for orchestration rules, path conventions, and capture grouping.
     Use `compare`, `ComparisonResult`, `Outcome`, `write_results` from Imports.

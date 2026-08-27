@@ -1,7 +1,9 @@
 Usages:
   pydantic_config: |
     Config models are Pydantic v2 BaseModel records. Fields are immutable where practical.
-    The site is a folder; `load_config` reads suite.yml plus every pages/*/page.yml and
+    The site is a folder; `load_config` reads the suite file (any explicitly passed
+    *.yml path — peeksy.yml in the project root by convention — or the suite.yml inside
+    a passed folder) plus every pages/*/page.yml and
     its sibling component *.yml files, and validates everything through the models. A
     malformed or invalid file must raise a Pydantic ValidationError surfaced as a
     human-readable message.
@@ -11,11 +13,33 @@ Usages:
     threshold (0..1) is the per-pixel sensitivity forwarded to pixelmatch; tolerance
     is the allowed mismatch percent that decides pass/fail. Both accept a per-component
     override where None means "inherit the suite default".
+    Numeric ranges are validated by the models: threshold is a float in (0..1) and
+    tolerance a float in (0..100] — on suite defaults and per-component overrides
+    alike; Viewport.width/height are positive ints; viewports must be a non-empty
+    list (a component with no viewport would silently never be captured). Out-of-range
+    values raise a ValidationError at load time.
     `Action` setup lists use a short YAML form parsed into Action(kind, target, value):
     a single string is the target for click/hover/scroll_to or the value for press/scroll_by/open;
     a list is [target, value] for fill/select (and optionally press); wait takes a
     selector (appear), {selector: ..., hidden: true} (disappear), a millisecond number (pause),
     or nothing (default stabilization); open takes a URL to navigate to as the value.
+    Page.wait_until selects the navigation wait strategy — allowed values: networkidle
+    (the default), domcontentloaded, load; anything else is a validation error. Pages with
+    long-polling/websockets/constant analytics never reach networkidle and should use
+    domcontentloaded plus explicit wait actions in setup.
+    Page.components are always kept in name-sorted order — components are captured in that
+    deterministic order regardless of filesystem file ordering.
+    A component's setup is SELF-SUFFICIENT: it must not rely on side effects left by previously
+    captured components (open menus, scroll position, hovers); when a component needs a clean
+    page, it starts its setup with reload (written as `- reload: {}`, no target, no value).
+    Page.url and a leading open action are mutually exclusive: url = None requires setup to
+    START with an open action (the deep-link flow), and a set url forbids open as the first
+    setup action — a model_validator rejects both violations so the page is never navigated
+    twice and never left without a start URL.
+    Relative baseline_path/results_path/report_path in suite.yml resolve against the SITE
+    FOLDER (load_config normalizes them to absolute paths), so the suite behaves identically
+    no matter which working directory peeksy is invoked from; absolute paths pass through
+    unchanged.
 
 Annotations: |
   Config cell — validated YAML configuration model for a peeksy site (variant D layout).
@@ -32,8 +56,8 @@ Annotations: |
   annotations: |
     A single viewport dimension in CSS pixels.
 
-    `width`: viewport width in CSS pixels
-    `height`: viewport height in CSS pixels
+    `width`: viewport width in CSS pixels (positive int)
+    `height`: viewport height in CSS pixels (positive int)
 
     Use `pydantic_config` for the model definition.
   properties:
@@ -47,7 +71,7 @@ Annotations: |
   annotations: |
     One setup action to perform on a page or component before a screenshot.
 
-    `kind`: one of click, hover, scroll_to, scroll_by, fill, press, select, wait, open
+    `kind`: one of click, hover, scroll_to, scroll_by, fill, press, select, wait, open, reload
     `target`: CSS selector of the element the action targets; None when the action needs no element
     `value`: auxiliary value whose meaning depends on `kind` — fill/press/select text/key/option, scroll_by pixels, wait milliseconds-or-mode, open a URL; None when not applicable
 
@@ -57,7 +81,8 @@ Annotations: |
     scroll_by takes pixel `value` (or [x, y]); fill/select take [target, value]; press takes a
     key `value` (optionally [target, key]); wait takes a selector `target` (appear),
     {selector, hidden} (disappear), a millisecond `value` (pause), or nothing (default stabilization);
-    open takes a URL `value` and targets no element.
+    open takes a URL `value` and targets no element; reload re-navigates the current URL and
+    takes neither `target` nor `value` (use it to start a component's setup from a clean page).
 
     Requirements:
     - click/hover/scroll_to: `target` = selector, `value` = None
@@ -66,11 +91,12 @@ Annotations: |
     - scroll_by: `value` = pixels ("300") or "[x, y]"
     - wait: `value` = milliseconds ("500"), "hidden" (with a `target` selector), or None (default stabilization)
     - open: `value` = URL to navigate the page to; `target` = None
+    - reload: `target` = None, `value` = None (reload the currently open page)
 
     Use `pydantic_config` for the model definition.
   properties:
     "kind -> str": |
-      One of click, hover, scroll_to, scroll_by, fill, press, select, wait, open.
+      One of click, hover, scroll_to, scroll_by, fill, press, select, wait, open, reload.
     "target -> str | None": |
       CSS selector of the action target; None when no element is needed.
     "value -> str | None": |
@@ -84,9 +110,9 @@ Annotations: |
     `name`: component identifier, derived from its filename; unique within its page
     `selector`: CSS selector locating the component element
     `mask_selectors`: CSS selectors of dynamic regions to hide before the shot
-    `viewports`: viewports to capture this component at (one baseline/result per viewport)
-    `threshold`: per-pixel sensitivity override (None => inherit suite threshold)
-    `tolerance`: allowed mismatch % override (None => inherit suite tolerance)
+    `viewports`: viewports to capture this component at (one baseline/result per viewport); must be non-empty — a component with no viewport would silently never be captured
+    `threshold`: per-pixel sensitivity override in (0..1) (None => inherit suite threshold)
+    `tolerance`: allowed mismatch % override in (0..100] (None => inherit suite tolerance)
     `setup`: component-level actions to run before this component's shot (e.g. hover, click a tab)
 
     A component does not carry a URL — that lives on its `Page`. Use `pydantic_config` for the model definition.
@@ -98,36 +124,42 @@ Annotations: |
     "mask_selectors -> list[str]": |
       CSS selectors of dynamic regions to hide before the shot.
     "viewports -> list[Viewport]": |
-      Viewports to capture this component at.
+      Viewports to capture this component at (non-empty).
     "threshold -> float | None": |
-      Per-pixel sensitivity override; None inherits the suite default.
+      Per-pixel sensitivity override in (0..1); None inherits the suite default.
     "tolerance -> float | None": |
-      Allowed mismatch % override; None inherits the suite default.
+      Allowed mismatch % override in (0..100]; None inherits the suite default.
     "setup -> list[Action]": |
       Component-level actions to run before the shot.
 
-"Page(name: str, url: str, setup: list[Action], components: list[Component])":
+"Page(name: str, url: str | None, wait_until: str, setup: list[Action], components: list[Component])":
   location: models.py
   annotations: |
-    One page of the site: a URL, page-level setup actions, and the components on it.
+    One page of the site: a URL, navigation wait strategy, page-level setup actions, and the components on it.
 
     `name`: page identifier, derived from its folder name
-    `url`: page URL to open before capturing any of its components
+    `url`: page URL to open before capturing any of its components; None for a deep-link flow where setup starts with an open action
+    `wait_until`: navigation wait strategy forwarded to page.goto — "networkidle" (default when omitted in page.yml), "domcontentloaded", or "load"; live pages (long-polling, websockets, constant analytics) should use "domcontentloaded" plus explicit wait actions in setup
     `setup`: page-level actions run once per viewport after navigation (e.g. close cookie banner, log in)
-    `components`: components discovered as the sibling *.yml files of this page's page.yml
+    `components`: components discovered as the sibling *.yml files of this page's page.yml, kept in name-sorted order so capture order is deterministic regardless of filesystem ordering
 
     Validation: Component.name values MUST be unique within `components` of this page; a
     model_validator rejects duplicates so they cannot collide on the page-namespaced
-    baseline path or testCaseId. Use `pydantic_config` for the model definition.
+    baseline path or testCaseId. `wait_until` must be one of networkidle/domcontentloaded/load.
+    url and a leading open are mutually exclusive: url = None requires setup[0] to be an open
+    action; a set url forbids open as setup[0] — the page is never navigated twice and never
+    left without a start URL. Use `pydantic_config` for the model definition.
   properties:
     "name -> str": |
       Page identifier (from its folder name).
-    "url -> str": |
-      Page URL to open before capturing.
+    "url -> str | None": |
+      Page URL to open before capturing; None for a deep-link flow (setup starts with open).
+    "wait_until -> str": |
+      Navigation wait strategy: networkidle (default), domcontentloaded, or load.
     "setup -> list[Action]": |
       Page-level actions run once per viewport after navigation.
     "components -> list[Component]": |
-      Components on this page (sibling *.yml files).
+      Components on this page (sibling *.yml files), name-sorted for deterministic capture order.
 
 "Suite(name: str, pages: list[Page], baseline_path: str, results_path: str, report_path: str, threshold: float, tolerance: float)":
   location: models.py
@@ -136,11 +168,11 @@ Annotations: |
 
     `name`: suite/site name (used as the Allure suite label)
     `pages`: pages to capture and compare
-    `baseline_path`: directory for baseline PNGs (written by generate, read-only for test), organized as {baseline_path}/{page}/{name}_{WxH}.png
-    `results_path`: directory for Allure results and current/diff PNGs
-    `report_path`: directory for the built HTML report
-    `threshold`: suite-default per-pixel sensitivity (0..1) forwarded to pixelmatch
-    `tolerance`: suite-default allowed mismatch % — a component PASSES when mismatch% <= tolerance
+    `baseline_path`: directory for baseline PNGs (written by generate, read-only for test), organized as {baseline_path}/{page}/{name}_{WxH}.png; relative values resolve against the site folder
+    `results_path`: directory for Allure results and current/diff PNGs; relative values resolve against the site folder
+    `report_path`: directory for the built HTML report; relative values resolve against the site folder
+    `threshold`: suite-default per-pixel sensitivity in (0..1) forwarded to pixelmatch
+    `tolerance`: suite-default allowed mismatch % in (0..100] — a component PASSES when mismatch% <= tolerance
 
     The same component name MAY appear on different pages (they are namespaced by page); only
     duplicates within a single page are rejected. Use `pydantic_config` for the model definition.
@@ -156,23 +188,23 @@ Annotations: |
     "report_path -> str": |
       Directory for the built HTML report.
     "threshold -> float": |
-      Suite-default per-pixel sensitivity (0..1).
+      Suite-default per-pixel sensitivity in (0..1).
     "tolerance -> float": |
-      Suite-default allowed mismatch %.
+      Suite-default allowed mismatch % in (0..100].
 
 "load_config(path: str) -> suite: Suite":
   location: loader.py
   annotations: |
     Discover and validate a peeksy site folder.
 
-    `path`: path to the site folder (a suite.yml inside is also accepted)
+    `path`: path to the site folder, or to a suite file directly (any explicitly passed *.yml — peeksy.yml in the project root by convention, or the suite.yml inside a passed folder); defaults to ./peeksy.yml at the CLI layer
     `suite`: the validated Suite
 
     Algorithm:
-    1. Resolve the site folder from `path` (if `path` is suite.yml, use its parent)
-    2. Read and validate suite.yml for the suite meta (name, paths, threshold, tolerance)
+    1. Resolve the site folder from `path`: an explicitly passed *.yml file IS the suite file (use its parent); a folder looks up suite.yml inside it
+    2. Read and validate the resolved suite file (suite meta: name, paths, threshold, tolerance); normalize relative baseline_path/results_path/report_path to absolute paths against the site folder so the suite is CWD-independent
     3. For each subfolder of pages/, read its page.yml (url, setup) and discover its components as the other *.yml files in that folder
-    4. Build `Page` and `Component` models (names derived from folder/filenames) and validate per `pydantic_config`, including per-page name uniqueness
+    4. Build `Page` and `Component` models (names derived from folder/filenames) and validate per `pydantic_config`, including per-page name uniqueness and the numeric ranges (threshold in (0..1), tolerance in (0..100], positive viewport dimensions, non-empty viewports)
     5. Return the resulting `Suite`; raise on any validation or IO error with a human-readable message
 
     Use `pydantic_config` for validation rules.

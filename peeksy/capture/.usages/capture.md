@@ -14,8 +14,12 @@ session = CaptureSession()
 session.open()
 try:
     for page in suite.pages:
-        # viewports needed by this page's components (inline union)
-        viewports = {vp for c in page.components for vp in c.viewports}
+        # viewports needed by this page's components (ordered dedupe — Viewport is unhashable)
+        viewports = []
+        for c in page.components:
+            for vp in c.viewports:
+                if vp not in viewports:
+                    viewports.append(vp)
         for viewport in viewports:
             session.open_page(page, viewport)        # navigate + page setup, once
             for component in page.components:
@@ -31,4 +35,4 @@ finally:
 - `capture_component` runs `component.setup`, masks, and writes the PNG to `out_path`.
 - `open_page`/`capture_component` require `open()` first; always `close()` the session after use.
 - Captures are idempotent: same component on the same open page ⇒ pixelmatch-clean images.
-- Mask selectors are hidden with `visibility: hidden` (never `display: none`) to preserve layout.
+- Mask selectors are covered with an opaque gray overlay (`::after`, never `display: none`) so the masked area is pixel-identical across runs while preserving layout; masks are located with the same helper as the component selector (plain CSS, piercing `>>`, or inside an `<iframe>`).
