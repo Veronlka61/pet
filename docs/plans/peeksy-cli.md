@@ -578,19 +578,19 @@ Internal helpers (private, same file): `run_actions(page, actions, wait_strategy
 
 **CRITICAL: `CODEMANIFEST` files — read-only contract definitions. Do NOT modify them. If implementation does not match the contract, fix the implementation — never fix the contract.**
 
-- [ ] **Contract tests** (`tests/test_capture_session.py`): `CaptureSession` importable from
+- [x] **Contract tests** (`tests/test_capture_session.py`): `CaptureSession` importable from
       `peeksy.capture`; methods `open()`, `open_page(page: Page, viewport: Viewport)`,
       `capture_component(component: Component, out_path: str) -> str`, `close()` exist with matching
       signatures via `inspect` (expected to fail now)
-- [ ] **Code**: create `peeksy/capture/session.py` — `CaptureSession` + private helpers
+- [x] **Code**: create `peeksy/capture/session.py` — `CaptureSession` + private helpers
       (`run_actions`, `locate`, `run_wait`) per the traces and `playwright.md`; create facade
       `peeksy/capture/__init__.py` with `__all__ = ["CaptureSession"]`
-- [ ] **Code**: create `tests/conftest.py` with a `fixture_site` factory: writes a local HTML page
+- [x] **Code**: create `tests/conftest.py` with a `fixture_site` factory: writes a local HTML page
       (served via `file://` — no HTTP server needed) containing `#header` with a
       `<span class="timestamp">` filled by JS with `Date.now()` on load, and a `#footer` (no dynamic
       content); the factory returns the HTML path so tests can copy/rewrite it
-- [ ] **Interface verification**: `uv run pytest tests/test_capture_session.py -v` — contract tests pass
-- [ ] **Logic tests** (`tests/test_capture_session.py`, REAL Chromium against the file:// fixture):
+- [x] **Interface verification**: `uv run pytest tests/test_capture_session.py -v` — contract tests pass
+- [x] **Logic tests** (`tests/test_capture_session.py`, REAL Chromium against the file:// fixture):
       positive — `open()` + `open_page(Page(url=<fixture>, wait_until="networkidle"), Viewport(1280, 720))`
       then `capture_component(Component(selector="#header", ...), out_path)` writes a loadable PNG and
       returns `out_path`; `test_open_action_navigates_mid_setup` (deep-link `Page(url=None,
@@ -603,11 +603,11 @@ Internal helpers (private, same file): `run_actions(page, actions, wait_strategy
       PIL scan of the footer PNG finds NO pixel of exactly `#808080` (no mask leakage); a component
       whose setup is `- reload: {}` still captures pixelmatch-clean against a non-reload capture
       (determinism re-inject); `close()` tears down and is safe to call once more (idempotent)
-- [ ] **Debugging**: `uv run pytest tests/test_capture_session.py -v` — fix implementation until all
+- [x] **Debugging**: `uv run pytest tests/test_capture_session.py -v` — fix implementation until all
       pass (do NOT fix test code)
-- [ ] **Contract re-verification**: facade, method signatures, and the two-level setup semantics match
+- [x] **Contract re-verification**: facade, method signatures, and the two-level setup semantics match
       `peeksy/capture/CODEMANIFEST`; no Playwright import leaks outside the capture cell
-- [ ] **Lint**: `uv run ruff check peeksy/capture tests/test_capture_session.py tests/conftest.py` + `uv run ruff format --check peeksy/capture tests/test_capture_session.py tests/conftest.py`
+- [x] **Lint**: `uv run ruff check peeksy/capture tests/test_capture_session.py tests/conftest.py` + `uv run ruff format --check peeksy/capture tests/test_capture_session.py tests/conftest.py`
 
 ### Task 8: `peeksy/runner` — `run_generate` / `run_test` / `run_report` (TDD)
 
