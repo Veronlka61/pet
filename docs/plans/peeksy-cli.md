@@ -763,31 +763,31 @@ reloading the URL between generate and test).
 - `image_diff` (`.goga/usages/cooks/image-diff.md`): determinism of the verdict.
 - `allure` (`.goga/usages/cooks/allure.md`): result JSON shape asserted in tests.
 
-- [ ] Create `tests/test_integration.py` reusing the `conftest.py` fixture factory
-- [ ] `test_run_generate_then_test_passes` (design scenario, verbatim): local fixture page; `Suite`
+- [x] Create `tests/test_integration.py` reusing the `conftest.py` fixture factory
+- [x] `test_run_generate_then_test_passes` (design scenario, verbatim): local fixture page; `Suite`
       with one component at 1280x720; `run_generate(suite, None, None)` then `run_test(suite, None, None)`
       → `exit_code == 0`; one `*-result.json` in `results_path`; baseline exists at
       `{baseline_path}/home/header_1280x720.png`
-- [ ] `test_cli_test_exits_nonzero_on_regression` (design scenario, verbatim): generate against the
+- [x] `test_cli_test_exits_nonzero_on_regression` (design scenario, verbatim): generate against the
       original HTML; rewrite the HTML on disk adding `style="transform: translateY(2px)"` to `#header`;
       `CliRunner().invoke(app, ["test", "--config", site])` → `result.exit_code == 1`; summary printed;
       `*-result.json` has `"status": "failed"` with mismatch in `statusDetails`; diff attachment file
       exists in `results_path`
-- [ ] `test_regression_in_single_viewport_fails_only_that_result` (design scenario, verbatim):
+- [x] `test_regression_in_single_viewport_fails_only_that_result` (design scenario, verbatim):
       component with viewports 1280x720 + 375x667; baseline both; rewrite HTML shifting `#header` ONLY
       via `@media (max-width: 500px)`; `run_test(suite, None, None)` → exit 1; exactly 2
       `*-result.json`, one passed one failed; baseline filenames `_1280x720.png` / `_375x667.png`
       (no collision); the two results carry distinct `historyId`s (`…::header[1280x720]` vs
       `…::header[375x667]`)
-- [ ] `test_masked_dynamic_region_stable_and_no_mask_leakage` (design scenario, verbatim): full
+- [x] `test_masked_dynamic_region_stable_and_no_mask_leakage` (design scenario, verbatim): full
       generate→test flow with `header.mask_selectors=[".timestamp"]` (timestamp re-randomized on
       reload); both outcomes `"passed"`; PIL scan of the footer PNG finds NO pixel of the exact mask
       gray `#808080`
-- [ ] Edge: `peeksy report` end-to-end with allure stubbed (which → real path, `subprocess.run` spy)
+- [x] Edge: `peeksy report` end-to-end with allure stubbed (which → real path, `subprocess.run` spy)
       via CliRunner — exits 0 and the spy saw the canonical argv; `uv run peeksy --help` smoke
-- [ ] Run validation: `uv run pytest tests/test_integration.py -v` — all pass; fix product code
+- [x] Run validation: `uv run pytest tests/test_integration.py -v` — all pass; fix product code
       (not tests) on failure
-- [ ] Full-suite gate: `uv run pytest` — every test in the project green
+- [x] Full-suite gate: `uv run pytest` — every test in the project green
 
 ---
 
@@ -803,16 +803,16 @@ reloading the URL between generate and test).
 
 ## Completion Criteria
 
-- [ ] Every contract entity is implemented in the correct `location`
-- [ ] Every contract entity is accessible from the facade (`__all__`)
-- [ ] Properties and methods match the declared API
-- [ ] Descriptions are reflected in behavior
-- [ ] Contract dependencies are met (imports resolve leaves → root)
-- [ ] Re-exports are accessible from the facade (none declared — n/a)
-- [ ] Every coding task followed the TDD workflow (contract tests → code → verification → logic tests → debugging → re-verification → lint)
-- [ ] Contract tests and logic tests cover facade, API, and behavior within each coding task
-- [ ] Integration tests exist for the cross-cell scenarios (Task 10)
-- [ ] No package boundary was expanded (no new cells; Playwright stays inside `peeksy/capture`)
-- [ ] `CODEMANIFEST` files were not modified (contract is read-only)
-- [ ] All validation commands pass
-- [ ] Every Usages entry is exercised in at least one task (`pydantic_config` → T2/T3, `image_diff` → T4/T10, `allure` → T5/T6/T10, `playwright` → T7/T10, `run_policy` → T8, `typer` → T9)
+- [x] Every contract entity is implemented in the correct `location`
+- [x] Every contract entity is accessible from the facade (`__all__`)
+- [x] Properties and methods match the declared API
+- [x] Descriptions are reflected in behavior
+- [x] Contract dependencies are met (imports resolve leaves → root)
+- [x] Re-exports are accessible from the facade (none declared — n/a)
+- [x] Every coding task followed the TDD workflow (contract tests → code → verification → logic tests → debugging → re-verification → lint)
+- [x] Contract tests and logic tests cover facade, API, and behavior within each coding task
+- [x] Integration tests exist for the cross-cell scenarios (Task 10)
+- [x] No package boundary was expanded (no new cells; Playwright stays inside `peeksy/capture`)
+- [x] `CODEMANIFEST` files were not modified (contract is read-only)
+- [x] All validation commands pass
+- [x] Every Usages entry is exercised in at least one task (`pydantic_config` → T2/T3, `image_diff` → T4/T10, `allure` → T5/T6/T10, `playwright` → T7/T10, `run_policy` → T8, `typer` → T9)
