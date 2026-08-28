@@ -18,7 +18,9 @@ peeksy report [--config PATH]
 - `--config` / `-c` — suite file or site folder. Default `./peeksy.yml`; a folder
   looks up its `suite.yml`.
 - `--page`, `--component` — repeatable name filters, combined as AND. `test`
-  applies them to decide which baselines to re-capture and compare.
+  applies them to decide which baselines to re-capture and compare. A filter
+  matching no page/component is an error (exit 1), never a green zero-component
+  run.
 - Exit codes: `test` exits 0 only when every selected component PASSED; any
   FAILED (visual regression) or BROKEN (infrastructure failure — missing
   baseline, selector not found, unreadable image) outcome exits 1.

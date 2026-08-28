@@ -31,11 +31,14 @@ def compare(
         return ComparisonResult(passed=False, mismatch_percent=100.0, diff_path=None)
 
     diff_img = Image.new("RGBA", baseline_img.size)
-    # No `includeAA`: pixelmatch's flag is inverted relative to its name —
-    # `includeAA=True` DISABLES the anti-aliasing detector (`if not includeAA`
-    # guards it), so every AA edge pixel over `threshold` would count as a hard
-    # mismatch and text-heavy components would flap between PASSED and FAILED.
-    mismatched = pixelmatch(baseline_img, current_img, diff_img, threshold=threshold)
+    # `includeAA=True` per the contract — pixelmatch's flag is inverted relative
+    # to its name (`if not includeAA` guards the detector), so True DISABLES the
+    # anti-aliasing filter and counts every AA edge pixel a real shift moved.
+    # Flapping is not a risk: an unchanged re-capture is byte-identical and hits
+    # pixelmatch's fast path (0 mismatched) before the detector ever runs.
+    mismatched = pixelmatch(
+        baseline_img, current_img, diff_img, threshold=threshold, includeAA=True
+    )
     total = baseline_img.size[0] * baseline_img.size[1]
     mismatch_percent = (mismatched / total) * 100.0
 

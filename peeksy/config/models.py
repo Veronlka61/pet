@@ -9,6 +9,7 @@ The short YAML form (`- click: "#x"`, `- fill: ["#q", "shoes"]`, ...) is parsed
 into `(kind, target, value)` here by `model_validator` per the per-kind rules.
 """
 
+import os
 from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -50,10 +51,21 @@ _REQUIRED_BY_KIND: dict[str, frozenset[str]] = {
     "open": frozenset({"value"}),
     "reload": frozenset(),
 }
-# Fields a kind must NOT carry, even though the model types allow them.
-_FORBIDDEN_BY_KIND: dict[str, frozenset[str]] = {kind: frozenset() for kind in get_args(ActionKind)}
-_FORBIDDEN_BY_KIND["reload"] = frozenset({"target", "value"})
-_FORBIDDEN_BY_KIND["open"] = frozenset({"target"})
+# Fields a kind must NOT carry, even though the model types allow them — the
+# CODEMANIFEST "Requirements" list verbatim (`value = None` for click/hover/
+# scroll_to, `target = None` for scroll_by/open, neither for reload).
+_FORBIDDEN_BY_KIND: dict[str, frozenset[str]] = {
+    "click": frozenset({"value"}),
+    "hover": frozenset({"value"}),
+    "scroll_to": frozenset({"value"}),
+    "scroll_by": frozenset({"target"}),
+    "fill": frozenset(),
+    "press": frozenset(),
+    "select": frozenset(),
+    "wait": frozenset(),
+    "open": frozenset({"target"}),
+    "reload": frozenset({"target", "value"}),
+}
 
 
 class Viewport(BaseModel):
@@ -145,8 +157,15 @@ def _wait_problems(target: str | None, value: str) -> list[str]:
     """`wait`'s value is either `"hidden"` (only WITH a target) or whole
     milliseconds. A target-present action never pauses, so any other value
     there is a config mistake, not a no-op to shoot through."""
+    if target is not None:
+        # Only "hidden" changes what a targeted wait does; a numeric value here
+        # (`wait for #m, then settle 500 ms` is the natural misreading) would
+        # be silently discarded by `run_wait`.
+        if value == "hidden":
+            return []
+        return [f"wait with a target takes 'hidden' or nothing, got {value!r}"]
     if value == "hidden":
-        return [] if target is not None else ['wait "hidden" needs a target selector']
+        return ['wait "hidden" needs a target selector']
     if _int_fails(value):
         return [f"wait takes whole milliseconds, got {value!r}"]
     return []
@@ -376,3 +395,36 @@ class Suite(BaseModel):
         le=100,
         description="Suite-default allowed mismatch % in (0..100].",
     )
+
+    @model_validator(mode="after")
+    def _paths_must_not_overlap(self) -> "Suite":
+        """Reject two of the three run directories resolving to the same tree.
+
+        `test` deletes `{results_path}/{page}` and `report` regenerates
+        `report_path` wholesale, so an overlap (`results_path == baseline_path`)
+        silently destroys the committed baselines — every later run reports
+        `BROKEN: baseline not found`. Nesting is rejected too: writing results
+        under `baseline_path/` makes `generate` adopt last run's outputs as the
+        new baselines. `normpath` collapses `.`, `..`, and duplicate separators
+        first, so those spellings cannot smuggle a collision through.
+        """
+        resolved = {
+            label: os.path.normpath(getattr(self, label))
+            for label in ("baseline_path", "results_path", "report_path")
+        }
+        for label, path in resolved.items():
+            for other, other_path in resolved.items():
+                if label >= other:
+                    continue  # each pair once
+                # Either direction of nesting is fatal, so both are checked —
+                # results inside report_path is as destructive as the reverse.
+                nested = path.startswith(other_path + os.sep) or other_path.startswith(
+                    path + os.sep
+                )
+                if path == other_path or nested:
+                    raise ValueError(
+                        f"{label} {path!r} overlaps {other} {other_path!r} — the run "
+                        "directories must be separate: test clears results and report "
+                        "regenerates its tree, so an overlap destroys the other's files"
+                    )
+        return self

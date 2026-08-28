@@ -82,14 +82,29 @@ def _load_suite_meta(suite_file: Path) -> Suite:
 
 
 def _load_pages(site_dir: Path) -> list[Page]:
-    """Walk `pages/*/` and build each `Page` with its components."""
+    """Walk `pages/*/` and build each `Page` with its components.
+
+    A subdirectory holding no `*.yml` at all is an artifact directory
+    (`__pycache__/`, `node_modules/`, `.git/`), not a page: it is skipped
+    rather than failing the whole load — every real page stays loadable.
+    """
     pages_dir = site_dir / "pages"
     if not pages_dir.is_dir():
         return []
     pages: list[Page] = []
     for page_dir in sorted(entry for entry in pages_dir.iterdir() if entry.is_dir()):
-        pages.append(_load_page(page_dir))
+        if _is_page_dir(page_dir):
+            pages.append(_load_page(page_dir))
     return pages
+
+
+def _is_page_dir(page_dir: Path) -> bool:
+    """Whether `page_dir` carries any YAML — `page.yml` or a component file.
+
+    A directory WITH yml but without `page.yml` is a broken page and must
+    still fail loudly in `_load_page`; only yml-free directories are skipped.
+    """
+    return any(entry.suffix == ".yml" for entry in page_dir.iterdir() if entry.is_file())
 
 
 def _load_page(page_dir: Path) -> Page:

@@ -36,4 +36,5 @@ finally:
 - `capture_component` runs `component.setup`, masks, and writes the PNG to `out_path`.
 - `open_page`/`capture_component` require `open()` first; always `close()` the session after use.
 - Captures are idempotent: same component on the same open page ⇒ pixelmatch-clean images.
-- Mask selectors are covered with an opaque gray overlay (`::after`, never `display: none`) so the masked area is pixel-identical across runs while preserving layout; masks are located with the same helper as the component selector (plain CSS, piercing `>>`, or inside an `<iframe>`).
+- Mask selectors are covered with an opaque gray overlay (`::after`, never `display: none`) so the masked area is pixel-identical across runs while preserving layout; masks are located with the same helper as the component selector (plain CSS, piercing `>>`, or inside an `<iframe>` via the `frame >>> inner` separator — see `peeksy/config/.usages/config.md`).
+- Selectors are written `<frame selector> >>> <inner selector>` for iframe content (three `>`, distinct from Playwright's two-`>` shadow-DOM piercing). A frame part matching several iframes masks every match; component capture and actions use the first.

@@ -323,7 +323,7 @@ def test_run_test_unreadable_baseline_is_broken_not_fatal(monkeypatch, tmp_path:
     assert results[1]["status"] == "passed"
 
 
-def test_run_test_empty_selection_is_noop_preserving_results(monkeypatch, tmp_path: Path) -> None:
+def test_run_test_empty_suite_is_noop_preserving_results(monkeypatch, tmp_path: Path) -> None:
     suite = make_suite(tmp_path, pages=[make_page("home", [make_component("header")])])
     generate_baselines(monkeypatch, suite)
     run_test(suite, None, None)
@@ -337,9 +337,29 @@ def test_run_test_empty_selection_is_noop_preserving_results(monkeypatch, tmp_pa
 
     session.open = explode  # type: ignore[method-assign]
 
-    assert run_test(suite, pages=["nonexistent"]) == 0
+    empty_suite = make_suite(tmp_path / "empty", pages=[])
+    assert run_test(empty_suite, None, None) == 0
     assert session.opened is False
     assert len(result_files(results_dir)) == before
+
+
+def test_unknown_filter_names_raise_instead_of_false_green(monkeypatch, tmp_path: Path) -> None:
+    """A typo'd --page/--component must fail loudly: matching nothing made
+    `run_test` return 0 and the CLI print "all components passed" — a CI gate
+    that silently compared zero components."""
+    suite = make_suite(tmp_path, pages=[make_page("home", [make_component("header")])])
+    session = install_fake(monkeypatch)
+
+    def explode() -> None:
+        raise AssertionError("a browser must not launch for a filter matching nothing")
+
+    session.open = explode  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="unknown page 'nonexistent'"):
+        run_test(suite, pages=["nonexistent"])
+    with pytest.raises(ValueError, match="unknown component 'nope'"):
+        run_test(suite, components=["nope"])
+    assert session.opened is False
 
 
 def test_results_dir_cleared_between_test_runs(monkeypatch, tmp_path: Path) -> None:

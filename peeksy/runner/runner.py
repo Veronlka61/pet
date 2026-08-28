@@ -196,7 +196,12 @@ def _compare_component(
 def _filter_pages(
     all_pages: list[Page], pages: list[str] | None, components: list[str] | None
 ) -> list[tuple[Page, list[Component]]]:
-    """Apply the page/component name filters (None => all); drop empty pages."""
+    """Apply the page/component name filters (None => all); drop empty pages.
+
+    A filter that matches nothing is a config mistake (a renamed page turning
+    the CI gate into a no-op that can never fail), so it raises rather than
+    returning an empty selection — which the callers treat as "suite is empty".
+    """
     wanted_pages = None if pages is None else set(pages)
     wanted_components = None if components is None else set(components)
     selected: list[tuple[Page, list[Component]]] = []
@@ -212,7 +217,47 @@ def _filter_pages(
         if kept:
             selected.append((page, kept))
 
+    if not selected:
+        _reject_unknown_filters(all_pages, pages, components, wanted_pages, wanted_components)
     return selected
+
+
+def _reject_unknown_filters(
+    all_pages: list[Page],
+    pages: list[str] | None,
+    components: list[str] | None,
+    wanted_pages: set[str] | None,
+    wanted_components: set[str] | None,
+) -> None:
+    """Raise naming every filter value no page/component answers to.
+
+    Reached only when the selection is empty: an empty `suite.pages` (a genuine
+    no-op run) passes through untouched, and the filters are checked only
+    against pages/components that would otherwise have been selected.
+    """
+    if not all_pages:
+        return
+    known_pages = {page.name for page in all_pages}
+    problems: list[str] = []
+    if wanted_pages is not None:
+        problems.extend(f"unknown page {name!r}" for name in pages or [] if name not in known_pages)
+    if wanted_components is not None:
+        known_on_kept_pages = {
+            c.name
+            for page in all_pages
+            if wanted_pages is None or page.name in wanted_pages
+            for c in page.components
+        }
+        problems.extend(
+            f"unknown component {name!r}"
+            for name in components or []
+            if name not in known_on_kept_pages
+        )
+    if problems:
+        raise ValueError(
+            f"filter matched nothing: {'; '.join(sorted(problems))} "
+            f"(known pages: {sorted(known_pages)})"
+        )
 
 
 def _group_by_viewport(components: list[Component]) -> list[tuple[Viewport, list[Component]]]:

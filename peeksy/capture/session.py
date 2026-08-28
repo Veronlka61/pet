@@ -256,8 +256,17 @@ def _resolve_frames(page: PlaywrightPage, selector: str) -> list[Frame]:
     returned — determinism CSS must reach each one. Non-frame matches of the
     frame part are skipped rather than fatal: the mask/component locator
     reports the real problem (matched no elements) once the caller gets there.
+
+    `element_handles` does NOT auto-wait (it returns [] immediately for an
+    element not yet attached), and this runs before the component's own
+    `wait_for` — with `wait_until: domcontentloaded` an iframe that attaches
+    after DCL would otherwise resolve zero frames and silently skip the
+    determinism/mask CSS. Waiting for attachment first closes that window; a
+    frame that never appears still fails through the caller's timeout.
     """
     frame_part = selector.partition(">>>")[0].strip()
+    owner = page.locator(frame_part).first
+    owner.wait_for(state="attached")
     frames: list[Frame] = []
     for handle in page.locator(frame_part).element_handles():
         frame = handle.content_frame()

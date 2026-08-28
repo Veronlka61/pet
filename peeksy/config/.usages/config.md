@@ -86,6 +86,22 @@ at its start when it needs a clean page.
 - Component names must be unique **within a page** (they are namespaced by page in the
   baseline path and `testCaseId`). The same name on different pages is fine.
 
+## Selectors
+
+`selector`, every entry of `mask_selectors`, and any action `target` accept:
+
+- plain CSS — `#header .title`
+- shadow-DOM piercing — `my-widget >> button.save` (Playwright's `>>` chaining)
+- content inside an `<iframe>` — `<frame selector> >>> <inner selector>`, e.g.
+  `iframe.ad >>> #in-frame` or `iframe#player >>> button.play`
+
+The `>>>` separator (three `>`, not Playwright's two) marks the iframe hop: peeksy
+resolves the frame through `frame_locator`, so the inner selector matches inside the
+frame's document. A frame part matching several iframes (every ad slot) masks
+**every** matching frame; component capture and actions use the first. Do not write
+`iframe.ad >> #in-frame` for an iframe — the two-`>` form is shadow-DOM piercing
+and matches nothing across a frame boundary.
+
 ## Paths
 
 - `suite.baseline_path` — baseline PNGs, organized as `{baseline_path}/{page}/{name}_{WxH}.png`

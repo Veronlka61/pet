@@ -652,7 +652,9 @@ def test_int_rejecting_scalars_fail_at_load(raw: dict) -> None:
     Unicode digits and doubled signs that `int()` rejects — and the `wait` guard
     exempted the target-present case entirely, so `value: hidden` with no
     target validated and then crashed `int("hidden")` mid-capture."""
-    with pytest.raises(ValidationError, match="whole milliseconds|whole pixels|needs a target"):
+    with pytest.raises(
+        ValidationError, match="whole milliseconds|whole pixels|needs a target|takes 'hidden'"
+    ):
         Action.model_validate(raw)
 
 
@@ -796,3 +798,298 @@ def test_component_selector_matching_several_iframes_captures(tmp_path: Path) ->
         assert Image.open(out_path).size == (100, 40)
     finally:
         session.close()
+
+
+# --------------------------------------------------------------------------
+# Review 5 — compare must count AA edge pixels a real shift moved
+# --------------------------------------------------------------------------
+
+
+def test_compare_counts_anti_aliased_edge_shifts(tmp_path: Path) -> None:
+    """Regression: `includeAA` was dropped, re-enabling pixelmatch's
+    anti-aliasing filter — a moved soft edge reads as AA noise and is excluded,
+    so a visible text-edge shift fell under tolerance and PASSED. The contract
+    (`peeksy/compare/CODEMANIFEST`) pins `includeAA=True`; identical re-captures
+    still pass via pixelmatch's byte-identical fast path."""
+    # A 200x100 image (20_000 px) with ONE thin soft edge: the detector-on
+    # count is 18 px (0.090%) while the AA-inclusive count is 40 px (0.200%) —
+    # tolerance 0.15 sits between them, so the verdict flips with the flag.
+    width, height = 200, 100
+
+    def write_strip(name: str, shift: float) -> str:
+        image = Image.new("RGB", (width, height), (255, 255, 255))
+        pixels = image.load()
+        for y in range(40, 60):
+            for x in range(90, 110):
+                tone = max(0.0, min(1.0, (x - 90 - shift) / 2.0))
+                value = int(255 * tone)
+                pixels[x, y] = (value, value, value)
+        path = tmp_path / name
+        image.save(path)
+        return str(path)
+
+    baseline = write_strip("edge_200x100.png", 0.0)
+    shifted = write_strip("edge_200x100.current.png", 1.0)
+
+    result = compare(baseline, shifted, str(tmp_path), threshold=0.1, tolerance=0.15)
+
+    assert result.passed is False, (
+        "an AA-edge shift was filtered out as anti-aliasing noise — includeAA=True is not in effect"
+    )
+
+
+# --------------------------------------------------------------------------
+# Review 5 — overlapping run directories must never load
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("baseline", "results", "report"),
+    [
+        pytest.param("shots", "shots", "report", id="results-equals-baseline"),
+        pytest.param("shots", "out/results", "out", id="results-nested-in-report"),
+        pytest.param("shots", "shots/./sub", "report", id="dot-nests-under-equal"),
+        pytest.param("shots/sub", "shots/sub/../..", "report", id="dotdot-collapses-to-equal"),
+    ],
+)
+def test_suite_rejects_overlapping_run_directories(
+    tmp_path: Path, baseline: str, results: str, report: str
+) -> None:
+    """Regression: `test` deletes `{results_path}/{page}` before capturing, so
+    `results_path == baseline_path` destroyed the committed baselines and every
+    later run reported `BROKEN: baseline not found`. Overlap is a load-time
+    config error, not a silent data-loss path."""
+    with pytest.raises(ValidationError, match="overlaps"):
+        Suite(
+            name="s",
+            pages=[],
+            baseline_path=str(tmp_path / baseline),
+            results_path=str(tmp_path / results),
+            report_path=str(tmp_path / report),
+            threshold=0.1,
+            tolerance=0.5,
+        )
+
+
+def test_suite_accepts_sibling_run_directories(tmp_path: Path) -> None:
+    """The guard must not reject the normal layout: three sibling dirs."""
+    suite = Suite(
+        name="s",
+        pages=[],
+        baseline_path=str(tmp_path / "baselines"),
+        results_path=str(tmp_path / "allure-results"),
+        report_path=str(tmp_path / "allure-report"),
+        threshold=0.1,
+        tolerance=0.5,
+    )
+    assert suite.baseline_path.endswith("baselines")
+
+
+# --------------------------------------------------------------------------
+# Review 5 — a filter matching nothing is an error, not a green run
+# --------------------------------------------------------------------------
+
+
+def test_cli_unknown_page_filter_is_human_readable_error(tmp_path: Path, monkeypatch) -> None:
+    """Regression: `peeksy test --page typoed` matched nothing, exited 0, and
+    printed "all components passed" — the visual gate silently compared zero
+    components and could never fail."""
+    from typer.testing import CliRunner
+
+    from peeksy.cli import app as cli_app
+    from tests.conftest import fixture_site
+
+    site = tmp_path / "site"
+    (site / "pages" / "home").mkdir(parents=True)
+    fixture_site(site / "home")
+    (site / "pages" / "home" / "page.yml").write_text(
+        f"url: file://{site / 'home' / 'index.html'}\n", encoding="utf-8"
+    )
+    (site / "pages" / "home" / "header.yml").write_text(
+        'selector: "#header"\nmask_selectors: []\nviewports: [{width: 1280, height: 720}]\n',
+        encoding="utf-8",
+    )
+    (site / "suite.yml").write_text(
+        "name: s\n"
+        f"baseline_path: {tmp_path / 'b'}\n"
+        f"results_path: {tmp_path / 'r'}\n"
+        f"report_path: {tmp_path / 'p'}\n"
+        "threshold: 0.1\ntolerance: 0.5\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli_app, ["test", "--config", str(site), "--page", "typoed"])
+
+    assert result.exit_code == 1, result.output
+    assert "unknown page 'typoed'" in result.output
+    assert "Traceback" not in result.output
+
+
+# --------------------------------------------------------------------------
+# Review 5 — fields a kind ignores must fail at load, not silently no-op
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param({"kind": "click", "target": "#x", "value": "#y"}, id="click-with-value"),
+        pytest.param({"kind": "hover", "target": "#x", "value": "junk"}, id="hover-with-value"),
+        pytest.param({"kind": "scroll_to", "target": "#x", "value": "5"}, id="scroll-to-value"),
+        pytest.param(
+            {"kind": "scroll_by", "target": "#x", "value": "300"}, id="scroll-by-with-target"
+        ),
+    ],
+)
+def test_ignored_long_form_fields_are_rejected(raw: dict) -> None:
+    """Regression: only reload/open had entries in `_FORBIDDEN_BY_KIND`, so
+    e.g. `scroll_by` with a `target` validated and then dispatched to
+    `page.mouse.wheel` — the selector silently dropped, the capture scrolled
+    a different amount than configured."""
+    with pytest.raises(ValidationError, match="takes no (target|value)"):
+        Action.model_validate(raw)
+
+
+# --------------------------------------------------------------------------
+# Review 5 — a late-attaching iframe must still get determinism/mask CSS
+# --------------------------------------------------------------------------
+
+_LATE_IFRAME_HTML = """<!DOCTYPE html><html><body style="margin:0">
+<div id="wrap" style="width:300px; height:80px;"></div>
+<script>
+  // The frame lands AFTER domcontentloaded — exactly the window
+  // `element_handles()` (which does not auto-wait) used to miss.
+  setTimeout(() => {
+    const frame = document.createElement('iframe');
+    frame.id = 'late';
+    frame.style.cssText = 'width:300px; height:80px; border:0;';
+    frame.srcdoc = '<style>\\
+        @keyframes slide { from { transform: translateX(0); } to { transform: translateX(40px); } }\\
+        #bar { width: 60px; height: 20px; background: #333333; animation: slide 100s linear infinite; }\\
+        #in-frame { width: 280px; height: 60px; }\\
+      </style>\\
+      <div id="in-frame"><div id="bar"></div>\\
+        <span id="clock" style="display:inline-block; width:120px; height:30px;">12:00</span></div>';
+    document.getElementById('wrap').appendChild(frame);
+  }, 300);
+</script>
+</body></html>"""
+
+
+def test_late_attaching_iframe_still_receives_determinism(tmp_path: Path) -> None:
+    """Regression: `_resolve_frames` collected handles without waiting, so with
+    `wait_until: domcontentloaded` a frame attaching after DCL resolved zero
+    frames on the determinism pass — `animation: none` never reached the frame
+    and an animated element kept rendering mid-flight into every shot. No mask
+    selectors on this component: a mask entry re-runs determinism later and
+    would mask the gap."""
+    html = _write_page(tmp_path, _LATE_IFRAME_HTML)
+    session = CaptureSession()
+    session.open()
+    try:
+        session.open_page(Page(name="home", url=html.as_uri(), wait_until="domcontentloaded"), VP)
+        component = Component(
+            name="late-frame",
+            selector="iframe#late >>> #in-frame",
+            viewports=[VP],
+        )
+        out_path = str(tmp_path / "late_frame.png")
+        session.capture_component(component, out_path)
+
+        # The animated #bar must have been frozen by the ANIM_DISABLE_CSS that
+        # `_apply_determinism` injects into the frame: `animation: none`
+        # collapses the transform to "none". Pre-fix it was mid-animation.
+        # (`about:blank` siblings raise on evaluate — they hold no #bar.)
+        transforms = []
+        for frame in session.page.frames:
+            if frame.url == "about:blank":
+                continue
+            value = frame.evaluate(
+                "() => { const b = document.getElementById('bar');"
+                "return b ? getComputedStyle(b).transform : null; }"
+            )
+            if value is not None:
+                transforms.append(value)
+        assert transforms, "the late iframe's document was never reached at all"
+        assert all(value == "none" for value in transforms), (
+            f"animation still running in the late frame: {transforms}"
+        )
+    finally:
+        session.close()
+
+
+# --------------------------------------------------------------------------
+# Review 5 — artifact directories under pages/ must not break the load
+# --------------------------------------------------------------------------
+
+
+def test_artifact_dirs_under_pages_are_skipped(tmp_path: Path) -> None:
+    """Regression: every subdirectory of `pages/` was treated as a page, so an
+    incidental `__pycache__/` (or `node_modules/` on a site folder that also
+    holds frontend sources) made the whole suite unloadable."""
+    import yaml
+
+    from peeksy.config import load_config
+
+    site = tmp_path / "site"
+    home = site / "pages" / "home"
+    home.mkdir(parents=True)
+    (home / "page.yml").write_text("url: https://example.com/\n", encoding="utf-8")
+    (home / "header.yml").write_text(
+        'selector: "#header"\nmask_selectors: []\nviewports: [{width: 1280, height: 720}]\n',
+        encoding="utf-8",
+    )
+    pycache = site / "pages" / "__pycache__"
+    pycache.mkdir()
+    (pycache / "page.cpython-312.pyc").write_bytes(b"\x00")
+    (site / "suite.yml").write_text(
+        yaml.safe_dump(
+            {
+                "name": "s",
+                "baseline_path": str(tmp_path / "b"),
+                "results_path": str(tmp_path / "r"),
+                "report_path": str(tmp_path / "p"),
+                "threshold": 0.1,
+                "tolerance": 0.5,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    suite = load_config(str(site))
+
+    assert [page.name for page in suite.pages] == ["home"]
+    assert [c.name for c in suite.pages[0].components] == ["header"]
+
+
+def test_broken_page_dir_with_yml_still_fails(tmp_path: Path) -> None:
+    """The skip must not swallow real breakage: a directory that HAS yml but
+    lacks `page.yml` is a page missing its definition — still an error."""
+    import yaml
+
+    from peeksy.config import load_config
+
+    site = tmp_path / "site"
+    home = site / "pages" / "home"
+    home.mkdir(parents=True)
+    (home / "header.yml").write_text(
+        'selector: "#header"\nmask_selectors: []\nviewports: [{width: 1280, height: 720}]\n',
+        encoding="utf-8",
+    )
+    (site / "suite.yml").write_text(
+        yaml.safe_dump(
+            {
+                "name": "s",
+                "baseline_path": str(tmp_path / "b"),
+                "results_path": str(tmp_path / "r"),
+                "report_path": str(tmp_path / "p"),
+                "threshold": 0.1,
+                "tolerance": 0.5,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(FileNotFoundError, match="page.yml"):
+        load_config(str(site))

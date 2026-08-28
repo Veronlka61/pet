@@ -504,7 +504,15 @@ def test_short_form_action_rejects_malformed_shapes(raw: dict) -> None:
 
 def test_action_field_dict_passes_through_untouched() -> None:
     """The validator must not mangle an already-explicit field dict."""
-    action = Action.model_validate({"kind": "wait", "target": "#x", "value": "500"})
+    action = Action.model_validate({"kind": "wait", "target": "#x", "value": "hidden"})
     assert action.kind == "wait"
     assert action.target == "#x"
-    assert action.value == "500"
+    assert action.value == "hidden"
+
+
+def test_wait_with_target_rejects_discardable_values() -> None:
+    """`wait` + `target` never pauses, so a millisecond value would be silently
+    discarded by `run_wait` — the natural "wait for it, then settle" reading is
+    a config error instead."""
+    with pytest.raises(ValidationError, match="takes 'hidden'"):
+        Action.model_validate({"kind": "wait", "target": "#x", "value": "500"})
