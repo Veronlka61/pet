@@ -20,6 +20,7 @@ import subprocess
 import pytest
 
 import peeksy.reporting as reporting_facade
+import peeksy.reporting.report as report_module
 from peeksy.reporting import build_report
 
 RESULTS_DIR = "/tmp/results"
@@ -98,6 +99,23 @@ def test_build_report_invokes_allure_with_canonical_args(monkeypatch: pytest.Mon
     assert call["args"] == CANONICAL_ARGV  # results dir positional FIRST
     assert call["check"] is True
     assert call["capture_output"] is True
+    # A wedged JVM must not hang `peeksy report` forever with its output
+    # swallowed — every other external boundary carries an explicit bound.
+    assert call["timeout"] == report_module._ALLURE_TIMEOUT_S
+
+
+def test_build_report_timeout_raises_human_readable_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hung allure process must surface as a readable error the CLI already
+    knows how to handle (`RuntimeError`, same tier as the missing-CLI case),
+    not a stalled command with no output."""
+    spy = RunSpy(error=subprocess.TimeoutExpired(cmd=CANONICAL_ARGV, timeout=600, stderr=b""))
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/allure")
+    monkeypatch.setattr(subprocess, "run", spy)
+
+    with pytest.raises(RuntimeError, match="did not finish within"):
+        build_report(RESULTS_DIR, REPORT_DIR)
 
 
 def test_build_report_nonzero_exit_propagates_called_process_error(

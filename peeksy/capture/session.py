@@ -194,6 +194,23 @@ class CaptureSession:
 # --------------------------------------------------------------------------
 
 
+def _reapply_determinism(page: PlaywrightPage) -> None:
+    """Re-inject the animation-disable CSS after a navigation action.
+
+    `open_page` injects on the page it navigated to — but the deep-link flow
+    (`url: null`) injects on `about:blank`, and the leading `open` then
+    discards the tag. The same applies to `open`/`reload` anywhere in a setup
+    list. Without this, every setup action after the navigation runs against
+    a page whose animations and transitions are live: `click`/`hover` land on
+    a moving element and `wait` timings drift run to run. `capture_component`
+    re-injects before the shot, so the screenshot itself was already covered —
+    the actions leading up to it were not.
+    """
+    page.add_style_tag(content=ANIM_DISABLE_CSS)
+    page.add_style_tag(content=MASK_CSS)
+    page.evaluate("document.fonts.ready")
+
+
 def _apply_determinism(page: PlaywrightPage, selector: str | None = None) -> None:
     """Inject the animation-disable CSS (+ mask style) and wait for fonts.
 
@@ -328,15 +345,20 @@ def run_actions(page: PlaywrightPage, actions: list[Action], wait_strategy: str)
         elif kind == "fill":
             locate(page, action.target).fill(action.value)
         elif kind == "press":
-            (locate(page, action.target) if action.target else page.keyboard).press(action.value)
+            # `is not None`, not truthiness: an empty `target` would otherwise
+            # quietly become a keyboard-level press with no element.
+            target = page.keyboard if action.target is None else locate(page, action.target)
+            target.press(action.value)
         elif kind == "select":
             locate(page, action.target).select_option(action.value)
         elif kind == "wait":
             run_wait(page, action, wait_strategy)
         elif kind == "open":
             page.goto(action.value, wait_until=wait_strategy)
+            _reapply_determinism(page)
         elif kind == "reload":
             page.reload(wait_until=wait_strategy)
+            _reapply_determinism(page)
         else:  # pragma: no cover — `kind` is a closed Literal in the config
             raise ValueError(f"unknown action kind: {kind!r}")
 

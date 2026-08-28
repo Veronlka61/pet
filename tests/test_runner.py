@@ -362,6 +362,36 @@ def test_unknown_filter_names_raise_instead_of_false_green(monkeypatch, tmp_path
     assert session.opened is False
 
 
+def test_partial_typo_in_filter_list_raises_not_silent_subset(monkeypatch, tmp_path: Path) -> None:
+    """The guard must fire on a PARTIALLY valid filter list too.
+
+    `--page home --page hom2` (a stale name left behind after a rename) selects
+    the valid subset, runs green, and silently skips the renamed page — the
+    same false green the fully-unknown case guards against. The check therefore
+    runs on every filtered run, not only an empty selection.
+    """
+    suite = make_suite(
+        tmp_path, pages=[make_page("home", [make_component("header"), make_component("nav")])]
+    )
+    session = install_fake(monkeypatch)
+
+    def explode() -> None:
+        raise AssertionError("a rejected filter must not launch a browser")
+
+    session.open = explode  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="unknown page 'hom2'"):
+        run_test(suite, pages=["home", "hom2"])
+    with pytest.raises(ValueError, match="unknown component 'nav2'"):
+        run_test(suite, components=["header", "nav2"])
+    assert session.opened is False
+
+    # The valid-only spelling still runs (1 = missing baseline, not a raise).
+    session.open = FakeCaptureSession.open.__get__(session)  # type: ignore[method-assign]
+    assert run_test(suite, pages=["home"], components=["header"]) == 1
+    assert session.opened is True
+
+
 def test_results_dir_cleared_between_test_runs(monkeypatch, tmp_path: Path) -> None:
     suite = make_suite(tmp_path, pages=[make_page("home", [make_component("header")])])
     generate_baselines(monkeypatch, suite)

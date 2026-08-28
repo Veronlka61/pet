@@ -319,6 +319,29 @@ def test_load_config_missing_page_yml_raises_file_not_found(tmp_path: Path) -> N
         load_config(str(site))
 
 
+def test_load_config_page_without_component_files_raises(tmp_path: Path) -> None:
+    """A page folder holding only `page.yml` must not load as `components: []`.
+
+    The runner treats an empty selection as a no-op, so such a page would give
+    a green run that compared zero images. The common cause is an extension
+    typo (`header.yaml`), which the `*.yml` walk silently ignores.
+    """
+    site = write_site(tmp_path)
+    (site / "pages" / "home" / "header.yml").rename(site / "pages" / "home" / "header.yaml")
+    with pytest.raises(ValueError, match="no component files"):
+        load_config(str(site))
+
+
+def test_load_config_page_with_component_yml_only_still_loads(tmp_path: Path) -> None:
+    """The guard keys on the ABSENCE of component files, not on stray siblings.
+
+    Non-YAML artifacts next to `page.yml` are not an error — only a folder with
+    no `*.yml` component at all is.
+    """
+    site = write_site(tmp_path, extra_files={"pages/home/notes.txt": "not a component"})
+    assert [page.name for page in load_config(str(site)).pages] == ["home"]
+
+
 def test_load_config_non_yml_file_arg_raises_not_a_directory(tmp_path: Path) -> None:
     stray = tmp_path / "config.json"
     stray.write_text("{}", encoding="utf-8")

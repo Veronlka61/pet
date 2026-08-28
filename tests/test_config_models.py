@@ -516,3 +516,41 @@ def test_wait_with_target_rejects_discardable_values() -> None:
     a config error instead."""
     with pytest.raises(ValidationError, match="takes 'hidden'"):
         Action.model_validate({"kind": "wait", "target": "#x", "value": "500"})
+
+
+@pytest.mark.parametrize(
+    ("raw", "field"),
+    [
+        pytest.param({"kind": "click", "target": "", "value": None}, "target", id="click"),
+        pytest.param({"kind": "fill", "target": "#q", "value": ""}, "value", id="fill"),
+        pytest.param({"kind": "open", "target": None, "value": ""}, "value", id="open"),
+        pytest.param({"kind": "press", "target": None, "value": " "}, "value", id="press-space"),
+    ],
+)
+def test_action_rejects_empty_strings(raw: dict, field: str) -> None:
+    """An empty `target`/`value` validated today and surfaced as a Playwright
+    locator error mid-run — or, for `press`, silently became a keyboard-level
+    press with no element. It must fail at load, like every other config typo."""
+    with pytest.raises(ValidationError, match=f"{field} cannot be empty"):
+        Action.model_validate(raw)
+
+
+def test_component_rejects_empty_selector_and_suite_rejects_empty_name() -> None:
+    """Same failure class as an empty action field: a `selector: ""` is a
+    Playwright error mid-run, an empty suite name writes blank Allure labels."""
+    with pytest.raises(ValidationError, match="selector"):
+        Component.model_validate(
+            {"name": "header", "selector": "", "viewports": [{"width": 1, "height": 1}]}
+        )
+    with pytest.raises(ValidationError, match="name"):
+        Suite.model_validate(
+            {
+                "name": "",
+                "pages": [],
+                "baseline_path": "/b",
+                "results_path": "/r",
+                "report_path": "/rep",
+                "threshold": 0.1,
+                "tolerance": 0.5,
+            }
+        )

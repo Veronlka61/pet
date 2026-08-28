@@ -113,7 +113,17 @@ def _load_page(page_dir: Path) -> Page:
     if not page_file.is_file():
         raise FileNotFoundError(f"page file not found: {page_file}")
     raw = _mapping(_read_yaml(page_file), page_file)
-    components = [_load_component(component_file) for component_file in _component_files(page_dir)]
+    component_files = _component_files(page_dir)
+    # A page folder with no component file loads as `components: []`, and the
+    # runner then treats it as a selection with nothing to do — a green run
+    # that compared zero images. The usual cause is an extension typo
+    # (`header.yaml`), which silently fails the `*.yml` walk below.
+    if not component_files:
+        raise ValueError(
+            f"{page_dir} has no component files — expected at least one sibling "
+            f"*.yml file besides {PAGE_FILE} (check the extension: .yaml is not picked up)"
+        )
+    components = [_load_component(component_file) for component_file in component_files]
     return Page.model_validate({**raw, "name": page_dir.name, "components": components})
 
 

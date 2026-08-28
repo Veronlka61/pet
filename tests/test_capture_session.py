@@ -137,6 +137,35 @@ def test_open_action_navigates_mid_setup(tmp_path: Path) -> None:
         session.close()
 
 
+def test_determinism_survives_open_in_deep_link_setup(tmp_path: Path) -> None:
+    """`open_page` injects the determinism CSS on `about:blank` in the
+    deep-link flow, so the leading `open` used to discard it — every setup
+    action after the navigation ran with animations and transitions live.
+    The re-injection after `open`/`reload` keeps the invariant across the
+    whole action list, not just at shot time."""
+    html = fixture_site(tmp_path / "site")
+    session = CaptureSession()
+    session.open()
+    try:
+        session.open_page(
+            Page(
+                name="deep",
+                url=None,
+                setup=[Action(kind="open", target=None, value=html.as_uri())],
+            ),
+            VP,
+        )
+        injected = session.page.evaluate(
+            "() => [...document.styleSheets].some(sheet => { try {"
+            "return sheet.ownerNode.textContent.includes('peeksy') || "
+            "sheet.ownerNode.textContent.includes('animation: none')"
+            "} catch { return false } })"
+        )
+        assert injected is True
+    finally:
+        session.close()
+
+
 def test_capture_is_idempotent_pixelmatch_clean(tmp_path: Path) -> None:
     html = fixture_site(tmp_path / "site")
     session = CaptureSession()

@@ -33,6 +33,10 @@ for page in suite.pages:
 - `url` and a leading `open` are mutually exclusive (validated): `url: null` requires `setup`
   to start with `- open: <url>` (deep-link flow); a set `url` forbids `open` as the first
   action — the page is never navigated twice and never left without a start URL.
+- A page folder must hold at least one component `*.yml` file besides `page.yml` — a folder
+  with none fails the load rather than becoming a page the runner silently skips. Subfolders
+  of `pages/` with no YAML at all (e.g. `__pycache__/`) are ignored, not errors. Component
+  files must use the `.yml` extension; `.yaml` is not picked up.
 - `page.wait_until` selects the navigation wait strategy: `networkidle` (default), `domcontentloaded`, or `load`. Pages with long-polling/websockets/constant analytics never reach `networkidle` — set `wait_until: domcontentloaded` and add explicit `- wait: "#content"` actions in setup.
 - `component.setup` runs before that component's shot.
 - Per-component `threshold`/`tolerance` override the suite defaults; `None` means inherit.

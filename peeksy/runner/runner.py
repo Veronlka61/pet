@@ -198,14 +198,17 @@ def _filter_pages(
 ) -> list[tuple[Page, list[Component]]]:
     """Apply the page/component name filters (None => all); drop empty pages.
 
-    A filter that matches nothing is a config mistake (a renamed page turning
-    the CI gate into a no-op that can never fail), so it raises rather than
-    returning an empty selection — which the callers treat as "suite is empty".
+    Unknown filter values raise BEFORE any work starts — a typo'd name must
+    not become a green run that silently compares fewer components. The raise
+    happens ahead of the CaptureSession, the results reset, and the clear
+    patterns, so a rejected run leaves prior results untouched (the no-op
+    guarantees the plan attaches to an empty selection hold here too).
     """
     wanted_pages = None if pages is None else set(pages)
     wanted_components = None if components is None else set(components)
-    selected: list[tuple[Page, list[Component]]] = []
+    _reject_unknown_filters(all_pages, pages, components, wanted_pages, wanted_components)
 
+    selected: list[tuple[Page, list[Component]]] = []
     for page in all_pages:
         if wanted_pages is not None and page.name not in wanted_pages:
             continue
@@ -216,9 +219,6 @@ def _filter_pages(
         ]
         if kept:
             selected.append((page, kept))
-
-    if not selected:
-        _reject_unknown_filters(all_pages, pages, components, wanted_pages, wanted_components)
     return selected
 
 
@@ -231,9 +231,11 @@ def _reject_unknown_filters(
 ) -> None:
     """Raise naming every filter value no page/component answers to.
 
-    Reached only when the selection is empty: an empty `suite.pages` (a genuine
-    no-op run) passes through untouched, and the filters are checked only
-    against pages/components that would otherwise have been selected.
+    Checked on EVERY filtered run, not only an empty selection: a repeatable
+    flag carrying one stale name alongside valid ones (`--page home --page
+    hom2` after a rename) selects the valid subset and would otherwise report
+    a green run that silently skipped the renamed page. An empty `suite.pages`
+    is a genuine no-op run and passes through untouched.
     """
     if not all_pages:
         return

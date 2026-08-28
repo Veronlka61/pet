@@ -17,6 +17,10 @@ _ALLURE_MISSING = (
     "Install it with `brew install allure` or via sdkman (`sdk install allure`); "
     "it is Java-based, so a JDK is required too."
 )
+# Every other external boundary in peeksy carries an explicit bound (the
+# capture cell's ACTION_TIMEOUT_MS). Without one here, a wedged JVM blocks
+# `peeksy report` forever with its output swallowed by capture_output.
+_ALLURE_TIMEOUT_S = 600
 
 
 def build_report(results_dir: str, report_dir: str) -> None:
@@ -24,8 +28,15 @@ def build_report(results_dir: str, report_dir: str) -> None:
     if shutil.which("allure") is None:
         raise RuntimeError(_ALLURE_MISSING)
 
-    subprocess.run(
-        ["allure", "generate", results_dir, "--clean", "-o", report_dir],
-        check=True,
-        capture_output=True,
-    )
+    try:
+        subprocess.run(
+            ["allure", "generate", results_dir, "--clean", "-o", report_dir],
+            check=True,
+            capture_output=True,
+            timeout=_ALLURE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"the 'allure' CLI did not finish within {_ALLURE_TIMEOUT_S}s — "
+            "it may be hung; re-run `peeksy report` or investigate the JVM"
+        ) from error

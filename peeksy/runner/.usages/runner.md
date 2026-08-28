@@ -27,6 +27,9 @@ exit_code = run_test(suite, pages=["home"], components=["header", "sidebar"])
 ```
 
 - `test` is read-only on baselines.
+- Filter values are validated up front: any page/component name the suite does
+  not know raises a `ValueError` before a browser launches — a typo'd or stale
+  name never becomes a green run that silently compares fewer components.
 - Returns `0` when every component PASSES, otherwise `1` (CI-friendly).
 - Capture is grouped by (page, viewport): page setup runs once per viewport, not per component.
 - Infrastructure failures (page did not load, selector missing) become `BROKEN`, not regressions.

@@ -133,6 +133,11 @@ class Action(BaseModel):
                     problems.append(f"{label} is required for {self.kind!r}")
             elif label in _FORBIDDEN_BY_KIND[self.kind]:
                 problems.append(f"{self.kind!r} takes no {label}, got {forbidden!r}")
+            elif not forbidden.strip():
+                # An empty (or whitespace) string validates today and dies as a
+                # Playwright locator error mid-run — or, for `press`, silently
+                # becomes a keyboard-level press with no element at all.
+                problems.append(f"{label} cannot be empty for {self.kind!r}")
         if self.kind == "scroll_by" and self.value is not None:
             problems.extend(_scroll_by_problems(self.value))
         if self.kind == "wait" and self.value is not None:
@@ -300,7 +305,10 @@ class Component(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Component identifier; unique within its page.")
-    selector: str = Field(description="CSS selector locating the component element.")
+    selector: str = Field(
+        min_length=1,
+        description="CSS selector locating the component element.",
+    )
     mask_selectors: list[str] = Field(
         default_factory=list,
         description="CSS selectors of dynamic regions to hide before the shot.",
@@ -380,7 +388,10 @@ class Suite(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(description="Suite/site name; used as the Allure suite label.")
+    name: str = Field(
+        min_length=1,
+        description="Suite/site name; used as the Allure suite label.",
+    )
     pages: list[Page] = Field(default_factory=list, description="Pages to capture and compare.")
     baseline_path: str = Field(description="Directory for baseline PNGs (organized by page).")
     results_path: str = Field(description="Directory for Allure results and current/diff PNGs.")
