@@ -1,0 +1,4 @@
+# Absolute file:// URL — replace it with the real path after moving the folder
+# (for live pages use https://... and prefer wait_until: domcontentloaded).
+url: file:///Users/staroverova.v4/pet_project/peeksy/example/index.html
+wait_until: load

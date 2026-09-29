@@ -1,0 +1,27 @@
+site_name: peeksy
+site_description: Playwright-based visual regression CLI — generate baselines, test, report
+strict: true
+
+theme:
+  name: material
+
+# goga process artifacts live in docs/ but are not part of the public site
+exclude_docs: |
+  arch/*
+  design/*
+  plans/*
+  tasks/*
+
+nav:
+  - Overview: index.md
+  - CLI Usage: usage.md
+  - Configuration: configuration.md
+  - YAML DSL: yaml-dsl.md
+  - Example: example.md
+  - Cells:
+      - config: cells/config.md
+      - compare: cells/compare.md
+      - reporting: cells/reporting.md
+      - capture: cells/capture.md
+      - runner: cells/runner.md
+      - cli: cells/cli.md

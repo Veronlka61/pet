@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>peeksy example</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, "Helvetica Neue", sans-serif; background: #f5f6fa; }
+    #header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 24px 32px; background: #2b2d42; color: #fff;
+    }
+    #header .logo { font-size: 22px; font-weight: 700; letter-spacing: 1px; }
+    #header nav a { color: #edf2f4; margin-left: 20px; text-decoration: none; font-size: 14px; }
+    #main { padding: 40px 32px; }
+    #main h1 { color: #2b2d42; font-size: 28px; margin-bottom: 12px; }
+    #main p { color: #5c5f74; line-height: 1.6; max-width: 60ch; }
+    #footer {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      padding: 14px 32px; background: #edf2f4; color: #5c5f74; font-size: 12px;
+    }
+    .timestamp { font-variant-numeric: tabular-nums; opacity: 0.85; }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <span class="logo">PEEKSY</span>
+    <nav>
+      <a href="#">Docs</a><a href="#">Demo</a><a href="#">GitHub</a>
+      <span class="timestamp"></span>
+    </nav>
+  </div>
+  <div id="main">
+    <h1>Visual regression example page</h1>
+    <p>Header and footer are the components under test. The header contains a
+       dynamic <code>.timestamp</code> region — masked with a gray overlay so it
+       never causes a false diff.</p>
+  </div>
+  <div id="footer">© 2026 peeksy — deterministic element screenshots</div>
+  <script>document.querySelector('.timestamp').textContent = Date.now();</script>
+</body>
+</html>

@@ -66,6 +66,14 @@ uv run pytest                             # full test suite
 uv run ruff check peeksy tests            # lint
 ```
 
+### Docs
+
+```bash
+uv sync --group docs                      # mkdocs + mkdocs-material
+uv run mkdocs serve                       # live preview at http://127.0.0.1:8000
+uv run mkdocs build --strict              # validate + build (site/ by default)
+```
+
 ### Host note: Chromium shared libraries (no-root environments)
 
 On hosts without root, `playwright install chromium` downloads the browser but

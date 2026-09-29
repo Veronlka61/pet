@@ -1,0 +1,6 @@
+name: example.local
+baseline_path: baselines   # relative paths resolve against this folder
+results_path: results
+report_path: report
+threshold: 0.1             # per-pixel color sensitivity (0..1)
+tolerance: 0.5             # allowed mismatch % (0..100]

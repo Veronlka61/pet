@@ -1,0 +1,7 @@
+selector: "#header"
+mask_selectors: [".timestamp"]   # dynamic region covered with a gray overlay
+viewports:
+  - {width: 1280, height: 720}
+  - {width: 375, height: 667}    # mobile: one baseline/result per viewport
+# threshold: 0.05                # optional per-component override of the suite default
+# tolerance: 1.0                 # optional per-component override of the suite default

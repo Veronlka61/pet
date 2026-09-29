@@ -1,0 +1,30 @@
+# MkDocs traceability: documentation page -> cell directories whose
+# CODEMANIFEST / .usages the page draws from. Maintained by goga-tool-mkdocs.
+docs/index.md:
+  - peeksy/config
+  - peeksy/compare
+  - peeksy/reporting
+  - peeksy/capture
+  - peeksy/runner
+  - peeksy/cli
+docs/usage.md:
+  - peeksy/cli
+  - peeksy/runner
+docs/configuration.md:
+  - peeksy/config
+docs/yaml-dsl.md:
+  - peeksy/config
+docs/example.md:
+  - peeksy/config
+docs/cells/config.md:
+  - peeksy/config
+docs/cells/compare.md:
+  - peeksy/compare
+docs/cells/reporting.md:
+  - peeksy/reporting
+docs/cells/capture.md:
+  - peeksy/capture
+docs/cells/runner.md:
+  - peeksy/runner
+docs/cells/cli.md:
+  - peeksy/cli

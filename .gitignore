@@ -17,3 +17,6 @@ build/
 # Playwright
 # (browsers live in ~/.cache/ms-playwright)
 test-results/
+
+# MkDocs output
+site/
