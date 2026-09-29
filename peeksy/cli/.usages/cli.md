@@ -32,6 +32,8 @@ peeksy report --config sites/example.com
   An explicitly passed `*.yml` path is the suite file directly; a folder argument falls
   back to looking up `suite.yml` inside it.
 - `--page` and `--component` are repeatable and combine as an AND; omit them to process everything.
+- An unknown `--page`/`--component` value is an error (exit 1): peeksy names every unknown
+  value and touches nothing — a typo never becomes a green run comparing fewer components.
 - `test` is read-only on baselines, prints a one-line summary, and raises `typer.Exit` with a non-zero code on any regression or BROKEN.
 - Infrastructure failures are reported as `BROKEN`, not as visual regressions.
 - `report` requires the external `allure` CLI (Java/JDK) on PATH; if it is missing, peeksy prints a clear install message instead of a traceback.

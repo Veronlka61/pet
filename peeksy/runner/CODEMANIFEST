@@ -36,12 +36,20 @@ Usages:
     previously captured components — a component needing a clean page starts its setup with reload.
     If open_page fails, every (component, viewport) on that page becomes BROKEN with the
     page-setup error. pages filters by page name, components by component name; both None ⇒ all.
+    Every filter value must answer to at least one page/component: an unknown value raises a
+    ValueError naming every unknown BEFORE the session opens or any artifact is touched, so a
+    typo'd flag can never become a green run comparing fewer components; a rejected run leaves
+    prior results untouched, and an empty suite is a genuine no-op that passes through.
     The CaptureSession is closed in a finally block in both generate and test.
     generate is fail-fast: the first capture error closes the session and propagates
     (re-run with --page/--component to resume); test never aborts on capture errors —
     they become BROKEN outcomes.
-    Before writing results, test clears the results_path of prior *-result.json and
-    attachment files so consecutive runs never silently mix.
+    After the session opens and before the capture loop, test removes each selected page's
+    {results_path}/{page}/ subdirectory — stale .current.png/.diff.png of renamed or removed
+    components never survive; the run re-creates the subdirectories as it captures. The wipe
+    happens only after a successful browser launch, so the previous run's results never point
+    at deleted attachments. Before writing results, test clears the results_path of prior
+    *-result.json and attachment files so consecutive runs never silently mix.
 
 Annotations: |
   Runner cell — orchestrates generate/test/report over a Suite of pages.
@@ -62,7 +70,7 @@ Annotations: |
     `components`: component names to limit to (None => all)
 
     Algorithm:
-    1. Filter suite.pages by `pages` and each page's components by `components` per `run_policy` (None => all)
+    1. Filter suite.pages by `pages` and each page's components by `components` per `run_policy` (None => all); an unknown filter value raises per `run_policy` before any work starts
     2. Open a `CaptureSession`; the capture loop below runs in try/finally so the session is closed even when a capture error propagates
     3. For each filtered `Page`:
        a. Compute the ordered viewport list = unique viewports across its filtered components, deduplicated preserving first-seen order over the name-sorted components (deterministic; no set iteration)
@@ -83,8 +91,8 @@ Annotations: |
     `exit_code`: 0 when every component PASSES, otherwise 1
 
     Algorithm:
-    1. Filter suite.pages by `pages` and each page's components by `components` per `run_policy` (None => all)
-    2. Open a `CaptureSession`; collect `Outcome`s; the capture loop below runs in try/finally so the session is closed even when an unexpected error propagates
+    1. Filter suite.pages by `pages` and each page's components by `components` per `run_policy` (None => all); an unknown filter value raises per `run_policy` before any work starts
+    2. Open a `CaptureSession`; collect `Outcome`s. After the launch succeeds and before the capture loop, remove each selected page's {results_path}/{page}/ subdirectory per `run_policy` — stale .current.png/.diff.png of renamed or removed components never survive, and the previous run's results never point at deleted attachments. The capture loop below runs in try/finally so the session is closed even when an unexpected error propagates
     3. For each filtered `Page`:
        a. Compute the ordered viewport list = unique viewports across its filtered components, deduplicated preserving first-seen order over the name-sorted components (deterministic; no set iteration)
        b. For each `Viewport`:

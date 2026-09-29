@@ -35,6 +35,9 @@ exit_code = run_test(suite, pages=["home"], components=["header", "sidebar"])
 - Infrastructure failures (page did not load, selector missing) become `BROKEN`, not regressions.
 - A component with no baseline file is reported as `BROKEN` ("baseline not found; run `peeksy generate`"), not as a regression.
 - `BROKEN` outcomes carry a human-readable `error`; their image paths are `None` where no file exists.
+- Before the capture loop (after a successful browser launch), each selected page's
+  `{results_path}/{page}/` subdirectory is removed and re-created as the run captures —
+  stale `.current.png`/`.diff.png` of renamed or removed components never survive.
 - The results directory is cleared of prior `*-result.json`/attachment files before each `test` write, so consecutive runs never silently mix.
 
 ## Build the report
